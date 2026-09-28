@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Modern Wellness Palette -->
+    <color name="wellness_primary">#006D77</color>
+    <color name="wellness_primary_variant">#004E55</color>
+    <color name="wellness_primary_light">#E0F2F1</color>
+    <color name="wellness_secondary">#83C5BE</color>
+    <color name="wellness_accent">#E29578</color>
+    <color name="wellness_accent_light">#FFDDD2</color>
+
+    <color name="wellness_background">#F8FAF9</color>
+    <color name="wellness_surface">#FFFFFF</color>
+    <color name="wellness_surface_muted">#F0F4F4</color>
+    <color name="wellness_stroke">#DFE7E6</color>
+
+    <color name="wellness_text_primary">#142129</color>
+    <color name="wellness_text_secondary">#52666D</color>
+    <color name="wellness_text_tertiary">#8A9CA2</color>
+
+    <!-- Backward-compatible legacy aliases -->
+    <color name="teal_primary">#006D77</color>
+    <color name="teal_primary_container">#83C5BE</color>
+    <color name="teal_on_primary">#FFFFFF</color>
+    <color name="teal_secondary">#52666D</color>
+    <color name="teal_secondary_container">#E0F2F1</color>
+    <color name="background_light">#F8FAF9</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="text_primary">#142129</color>
+    <color name="text_secondary">#52666D</color>
+    <color name="card_stroke">#DFE7E6</color>
+    <color name="accent_soft_purple">#6D597A</color>
+
+    <!-- Refined Mood / Emotion Colors -->
+    <color name="mood_happy_bg">#DCFCE7</color>
+    <color name="mood_happy_text">#15803D</color>
+    <color name="mood_happy_badge">#22C55E</color>
+
+    <color name="mood_excited_bg">#FEF3C7</color>
+    <color name="mood_excited_text">#B45309</color>
+    <color name="mood_excited_badge">#F59E0B</color>
+
+    <color name="mood_sad_bg">#DBEAFE</color>
+    <color name="mood_sad_text">#1D4ED8</color>
+    <color name="mood_sad_badge">#3B82F6</color>
+
+    <color name="mood_surprised_bg">#EDE9FE</color>
+    <color name="mood_surprised_text">#6D28D9</color>
+    <color name="mood_surprised_badge">#8B5CF6</color>
+
+    <color name="mood_angry_bg">#FFE4E6</color>
+    <color name="mood_angry_text">#BE123C</color>
+    <color name="mood_angry_badge">#F43F5E</color>
+
+    <color name="mood_neutral_bg">#F1F5F9</color>
+    <color name="mood_neutral_text">#475569</color>
+    <color name="mood_neutral_badge">#64748B</color>
+</resources>

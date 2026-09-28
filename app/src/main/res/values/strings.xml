@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">My Emotions</string>
+    <string name="login_title">Welcome Back ✨</string>
+    <string name="login_subtitle">Sign in to continue your mindful emotion journey</string>
+    <string name="full_name_hint">Full Name</string>
+    <string name="email_hint">Email Address</string>
+    <string name="username_hint">Username or Email</string>
+    <string name="password_hint">Password (min. 6 characters)</string>
+    <string name="confirm_password_hint">Confirm Password</string>
+    <string name="btn_login">Sign In</string>
+    <string name="btn_register">Create My Account</string>
+    <string name="link_register">New here? Create an Account</string>
+    <string name="link_login">Already registered? Sign In</string>
+    <string name="register_title">Begin Your Journey 🌿</string>
+    <string name="register_subtitle">Create a private space to record and reflect</string>
+
+    <string name="home_welcome">Welcome back, %1$s ✨</string>
+    <string name="home_quote">"Awareness of your emotions is the first step toward inner peace."</string>
+    <string name="home_subtitle">How is your day unfolding?</string>
+
+    <string name="stats_title">🌱 Emotion Insights</string>
+    <string name="stats_total_entries">Total Reflections</string>
+    <string name="stats_latest_emotion">Recent Mood</string>
+    <string name="stats_none">No logs yet</string>
+
+    <string name="card_log_title">📸 Log Your Emotion</string>
+    <string name="card_log_desc">Capture a photo or selfie, auto-detect your facial emotion with AI, and write personal notes</string>
+    <string name="card_list_title">💭 My Emotions</string>
+    <string name="card_list_desc">Explore your visual reflection timeline, filter by moods, and view past memories</string>
+    <string name="action_logout">Sign Out</string>
+
+    <string name="title_log_emotion">Log Emotion</string>
+    <string name="btn_take_photo">Take Selfie</string>
+    <string name="btn_retake_photo">Retake</string>
+    <string name="btn_choose_gallery">Choose Photo</string>
+    <string name="note_hint">What thoughts or events shaped this moment?</string>
+    <string name="btn_save_emotion">Save Emotion Entry</string>
+
+    <string name="emotion_analyzing">🔍 Analyzing facial expression &amp; features…</string>
+    <string name="emotion_detected_fmt">✨ AI Detected: %1$s (%2$d%% confidence)</string>
+    <string name="emotion_no_face">No clear face detected. Choose your current feeling below:</string>
+    <string name="select_emotion_title">How are you feeling?</string>
+
+    <string name="emotion_all">All Moods</string>
+    <string name="emotion_happy">😊 Happy</string>
+    <string name="emotion_excited">🤩 Excited</string>
+    <string name="emotion_sad">😢 Sad</string>
+    <string name="emotion_neutral">😐 Neutral</string>
+    <string name="emotion_surprised">😲 Surprised</string>
+    <string name="emotion_angry">😠 Angry</string>
+
+    <string name="title_my_emotions">My Emotion Journal</string>
+    <string name="empty_emotions">No emotions logged in this category.\nTap \"Log Your Emotion\" to create a reflection!</string>
+
+    <string name="err_empty_fields">Please fill in all required fields</string>
+    <string name="err_invalid_email">Please enter a valid email address</string>
+    <string name="err_password_short">Password must be at least 6 characters</string>
+    <string name="err_password_mismatch">Passwords do not match</string>
+    <string name="err_invalid_credentials">Incorrect email or password</string>
+    <string name="err_user_exists">An account with this email already exists</string>
+    <string name="err_no_photo">Please capture or choose a photo first</string>
+    <string name="err_no_note">Please add a note describing your experience</string>
+    <string name="msg_register_success">Account created! Welcome to My Emotions.</string>
+    <string name="msg_emotion_saved">Emotion entry saved securely!</string>
+    <string name="msg_emotion_deleted">Emotion entry removed</string>
+    <string name="btn_delete_entry">Delete Entry</string>
+    <string name="btn_close">Done</string>
+    <string name="confirm_delete_title">Delete Emotion Reflection?</string>
+    <string name="confirm_delete_msg">Are you sure you want to delete this emotion entry? The photo and note will be permanently removed.</string>
+</resources>
