@@ -25,6 +25,7 @@ navigation-ui = { group = "androidx.navigation", name = "navigation-ui", version
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 mlkit-face-detection = { group = "com.google.mlkit", name = "face-detection", version.ref = "faceDetection" }
+tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version = "2.16.1" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

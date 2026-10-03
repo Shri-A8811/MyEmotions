@@ -46,4 +46,24 @@ public class AppFlowTest {
         assertTrue(session.isLoggedIn());
         assertEquals(userId, session.getUserId());
     }
+
+    @Test
+    public void testTFLiteEmotionClassifier() {
+        Context context = ApplicationProvider.getApplicationContext();
+        com.mitaoe.shridhar202401040197.ml.TFLiteEmotionClassifier classifier =
+                com.mitaoe.shridhar202401040197.ml.TFLiteEmotionClassifier.getInstance(context);
+
+        assertTrue("TFLite classifier should be ready", classifier.isReady());
+
+        // Create a test synthetic face bitmap (48x48)
+        android.graphics.Bitmap testBmp = android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888);
+        com.mitaoe.shridhar202401040197.ml.TFLiteEmotionClassifier.ClassificationResult result =
+                classifier.classifyFace(testBmp);
+
+        assertNotNull("Classification result should not be null", result);
+        assertNotNull("Detected emotion should not be null", result.emotion);
+        assertTrue("Confidence should be positive", result.confidence > 0);
+        assertNotNull("Rationale should not be null", result.rationale);
+        assertTrue("Rationale should describe detection", result.rationale.contains("Neural network"));
+    }
 }

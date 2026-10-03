@@ -10,10 +10,16 @@ import android.util.Log;
 public class MyEmotionsApp extends Application {
 
     private static final String TAG = "MyEmotionsApp";
+    private static MyEmotionsApp instance;
+
+    public static MyEmotionsApp getInstance() {
+        return instance;
+    }
 
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
 
         final Thread.UncaughtExceptionHandler defaultHandler = Thread.getDefaultUncaughtExceptionHandler();
 
