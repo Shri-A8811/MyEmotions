@@ -15,11 +15,20 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
+import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 
 import com.google.android.material.snackbar.Snackbar;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.mitaoe.shridhar202401040197.data.AppDatabase;
 import com.mitaoe.shridhar202401040197.data.Emotion;
 import com.mitaoe.shridhar202401040197.databinding.ActivityLogYourEmotionBinding;
@@ -34,7 +43,9 @@ import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LogYourEmotionActivity extends AppCompatActivity {
 
@@ -46,12 +57,25 @@ public class LogYourEmotionActivity extends AppCompatActivity {
     private EmotionRecognitionEngine.EmotionResult lastFaceResult = null;
     private boolean isUserManualOverride = false;
 
+    // CameraX Live Detection Fields
+    private ProcessCameraProvider cameraProvider;
+    private ImageCapture imageCapture;
+    private CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+    private ExecutorService cameraExecutor;
+    private boolean isLiveCameraActive = false;
+    private final AtomicBoolean isAnalyzing = new AtomicBoolean(false);
+    private boolean pendingLiveCamera = false;
+
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
                 if (isGranted) {
-                    dispatchTakePictureIntent();
+                    if (pendingLiveCamera) {
+                        startLiveCamera();
+                    } else {
+                        dispatchTakePictureIntent();
+                    }
                 } else {
-                    Snackbar.make(binding.getRoot(), "Camera permission is required to capture photos", Snackbar.LENGTH_SHORT).show();
+                    Snackbar.make(binding.getRoot(), "Camera permission is required to use camera features", Snackbar.LENGTH_SHORT).show();
                 }
             });
 
@@ -76,12 +100,23 @@ public class LogYourEmotionActivity extends AppCompatActivity {
         setContentView(binding.getRoot());
 
         sessionManager = new SessionManager(this);
+        cameraExecutor = Executors.newSingleThreadExecutor();
 
         setSupportActionBar(binding.toolbarLog);
         binding.toolbarLog.setNavigationOnClickListener(v -> finish());
 
+        binding.btnLiveCamera.setOnClickListener(v -> toggleLiveCamera());
+        binding.btnSwitchCamera.setOnClickListener(v -> switchCameraLens());
+        binding.btnCaptureLive.setOnClickListener(v -> captureLivePhoto());
+        binding.layoutPhotoPlaceholder.setOnClickListener(v -> toggleLiveCamera());
+
         binding.btnTakePhoto.setOnClickListener(v -> checkPermissionAndTakePhoto());
-        binding.btnGallery.setOnClickListener(v -> pickGalleryLauncher.launch("image/*"));
+        binding.btnGallery.setOnClickListener(v -> {
+            if (isLiveCameraActive) {
+                stopLiveCamera();
+            }
+            pickGalleryLauncher.launch("image/*");
+        });
         binding.btnSaveEmotion.setOnClickListener(v -> saveEmotion());
 
         setupEmotionChips();
@@ -148,10 +183,230 @@ public class LogYourEmotionActivity extends AppCompatActivity {
     }
 
     private void checkPermissionAndTakePhoto() {
+        pendingLiveCamera = false;
+        if (isLiveCameraActive) {
+            stopLiveCamera();
+        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             dispatchTakePictureIntent();
         } else {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA);
+        }
+    }
+
+    private void toggleLiveCamera() {
+        if (isLiveCameraActive) {
+            stopLiveCamera();
+        } else {
+            pendingLiveCamera = true;
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                startLiveCamera();
+            } else {
+                requestPermissionLauncher.launch(Manifest.permission.CAMERA);
+            }
+        }
+    }
+
+    private void startLiveCamera() {
+        isLiveCameraActive = true;
+        binding.cameraPreviewView.setVisibility(View.VISIBLE);
+        binding.layoutLiveHud.setVisibility(View.VISIBLE);
+        binding.btnSwitchCamera.setVisibility(View.VISIBLE);
+        binding.btnCaptureLive.setVisibility(View.VISIBLE);
+        binding.ivPhotoPreview.setVisibility(View.GONE);
+        binding.layoutPhotoPlaceholder.setVisibility(View.GONE);
+        binding.btnLiveCamera.setText("🛑 Stop Live");
+        binding.tvLiveEmotionBadge.setText(R.string.live_detecting);
+
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+        cameraProviderFuture.addListener(() -> {
+            try {
+                cameraProvider = cameraProviderFuture.get();
+                if (!cameraProvider.hasCamera(cameraSelector)) {
+                    cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+                }
+                bindCameraUseCases();
+            } catch (Exception e) {
+                Snackbar.make(binding.getRoot(), "Unable to initialize camera preview: " + e.getMessage(), Snackbar.LENGTH_SHORT).show();
+                stopLiveCamera();
+            }
+        }, ContextCompat.getMainExecutor(this));
+    }
+
+    private void bindCameraUseCases() {
+        if (cameraProvider == null) return;
+        cameraProvider.unbindAll();
+
+        Preview preview = new Preview.Builder().build();
+        preview.setSurfaceProvider(binding.cameraPreviewView.getSurfaceProvider());
+
+        imageCapture = new ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                .build();
+
+        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+
+        imageAnalysis.setAnalyzer(cameraExecutor, imageProxy -> {
+            if (!isLiveCameraActive || isAnalyzing.get()) {
+                imageProxy.close();
+                return;
+            }
+
+            isAnalyzing.set(true);
+            try {
+                Bitmap rawBitmap = imageProxy.toBitmap();
+                int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
+                imageProxy.close();
+
+                if (rawBitmap != null) {
+                    Bitmap uprightBitmap;
+                    if (rotationDegrees != 0) {
+                        Matrix matrix = new Matrix();
+                        matrix.postRotate(rotationDegrees);
+                        uprightBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.getWidth(), rawBitmap.getHeight(), matrix, true);
+                        if (uprightBitmap != rawBitmap) {
+                            rawBitmap.recycle();
+                        }
+                    } else {
+                        uprightBitmap = rawBitmap;
+                    }
+
+                    Bitmap analysisBitmap;
+                    if (uprightBitmap.getWidth() > 360) {
+                        int targetHeight = Math.max(1, (int) (360.0f * uprightBitmap.getHeight() / uprightBitmap.getWidth()));
+                        analysisBitmap = Bitmap.createScaledBitmap(uprightBitmap, 360, targetHeight, true);
+                        if (analysisBitmap != uprightBitmap) {
+                            uprightBitmap.recycle();
+                        }
+                    } else {
+                        analysisBitmap = uprightBitmap;
+                    }
+
+                    EmotionRecognitionEngine.analyzeFaceEmotion(analysisBitmap, new EmotionRecognitionEngine.EmotionCallback() {
+                        @Override
+                        public void onEmotionDetected(EmotionRecognitionEngine.EmotionResult result) {
+                            try {
+                                analysisBitmap.recycle();
+                            } catch (Throwable ignored) {}
+                            isAnalyzing.set(false);
+                            runOnUiThread(() -> {
+                                if (!isLiveCameraActive) return;
+                                lastFaceResult = result;
+                                String hudText = String.format(Locale.getDefault(), "LIVE: %s (%d%%)", result.getFormatted(), result.confidence);
+                                binding.tvLiveEmotionBadge.setText(hudText);
+                                if (!isUserManualOverride) {
+                                    applyEmotionToUi(result);
+                                } else {
+                                    binding.tvEmotionRationale.setText(result.rationale);
+                                }
+                            });
+                        }
+
+                        @Override
+                        public void onNoFaceDetected() {
+                            try {
+                                analysisBitmap.recycle();
+                            } catch (Throwable ignored) {}
+                            isAnalyzing.set(false);
+                            runOnUiThread(() -> {
+                                if (!isLiveCameraActive) return;
+                                binding.tvLiveEmotionBadge.setText(R.string.live_detecting);
+                            });
+                        }
+
+                        @Override
+                        public void onError(Exception e) {
+                            try {
+                                analysisBitmap.recycle();
+                            } catch (Throwable ignored) {}
+                            isAnalyzing.set(false);
+                        }
+                    });
+                } else {
+                    isAnalyzing.set(false);
+                }
+            } catch (Throwable t) {
+                try {
+                    imageProxy.close();
+                } catch (Throwable ignored) {}
+                isAnalyzing.set(false);
+            }
+        });
+
+        try {
+            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture, imageAnalysis);
+        } catch (Exception e) {
+            Snackbar.make(binding.getRoot(), "Camera binding failed: " + e.getMessage(), Snackbar.LENGTH_SHORT).show();
+        }
+    }
+
+    private void switchCameraLens() {
+        CameraSelector targetSelector = (cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA)
+                ? CameraSelector.DEFAULT_BACK_CAMERA
+                : CameraSelector.DEFAULT_FRONT_CAMERA;
+        try {
+            if (cameraProvider != null && cameraProvider.hasCamera(targetSelector)) {
+                cameraSelector = targetSelector;
+                if (isLiveCameraActive) {
+                    bindCameraUseCases();
+                }
+            } else {
+                Snackbar.make(binding.getRoot(), "Camera lens not available on this device", Snackbar.LENGTH_SHORT).show();
+            }
+        } catch (Exception e) {
+            Snackbar.make(binding.getRoot(), "Unable to switch camera: " + e.getMessage(), Snackbar.LENGTH_SHORT).show();
+        }
+    }
+
+    private void stopLiveCamera() {
+        isLiveCameraActive = false;
+        if (cameraProvider != null) {
+            cameraProvider.unbindAll();
+        }
+        binding.cameraPreviewView.setVisibility(View.GONE);
+        binding.layoutLiveHud.setVisibility(View.GONE);
+        binding.btnSwitchCamera.setVisibility(View.GONE);
+        binding.btnCaptureLive.setVisibility(View.GONE);
+        binding.btnLiveCamera.setText(R.string.btn_live_ai);
+
+        if (currentPhotoPath != null) {
+            binding.ivPhotoPreview.setVisibility(View.VISIBLE);
+            binding.layoutPhotoPlaceholder.setVisibility(View.GONE);
+        } else {
+            binding.ivPhotoPreview.setVisibility(View.GONE);
+            binding.layoutPhotoPlaceholder.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void captureLivePhoto() {
+        if (imageCapture == null) return;
+        try {
+            File photoFile = createImageFile();
+            ImageCapture.OutputFileOptions outputOptions = new ImageCapture.OutputFileOptions.Builder(photoFile).build();
+            binding.btnCaptureLive.setEnabled(false);
+
+            imageCapture.takePicture(outputOptions, ContextCompat.getMainExecutor(this), new ImageCapture.OnImageSavedCallback() {
+                @Override
+                public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
+                    binding.btnCaptureLive.setEnabled(true);
+                    currentPhotoPath = photoFile.getAbsolutePath();
+                    stopLiveCamera();
+                    processAndDisplayPhoto(currentPhotoPath);
+                    binding.etNote.requestFocus();
+                    Snackbar.make(binding.getRoot(), "Photo captured! Mood locked: " + (lastFaceResult != null ? lastFaceResult.getFormatted() : selectedEmotionType), Snackbar.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onError(@NonNull ImageCaptureException exception) {
+                    binding.btnCaptureLive.setEnabled(true);
+                    Snackbar.make(binding.getRoot(), "Capture failed: " + exception.getMessage(), Snackbar.LENGTH_SHORT).show();
+                }
+            });
+        } catch (Exception e) {
+            binding.btnCaptureLive.setEnabled(true);
+            Snackbar.make(binding.getRoot(), "Failed to prepare file: " + e.getMessage(), Snackbar.LENGTH_SHORT).show();
         }
     }
 
@@ -372,5 +627,24 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                 finish();
             });
         });
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (isLiveCameraActive) {
+            stopLiveCamera();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (isLiveCameraActive) {
+            stopLiveCamera();
+        }
+        if (cameraExecutor != null && !cameraExecutor.isShutdown()) {
+            cameraExecutor.shutdown();
+        }
     }
 }

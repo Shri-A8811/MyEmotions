@@ -28,10 +28,10 @@
             android:orientation="vertical"
             android:padding="20dp">
 
-            <!-- Photo Preview Card -->
+            <!-- Photo Preview Card with Live Camera & AI HUD -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
-                android:layout_height="230dp"
+                android:layout_height="260dp"
                 app:cardCornerRadius="20dp"
                 app:cardElevation="2dp"
                 app:strokeWidth="1dp"
@@ -43,6 +43,14 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent">
 
+                    <!-- Live Camera Viewfinder -->
+                    <androidx.camera.view.PreviewView
+                        android:id="@+id/cameraPreviewView"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:visibility="gone" />
+
+                    <!-- Captured or Selected Image -->
                     <ImageView
                         android:id="@+id/ivPhotoPreview"
                         android:layout_width="match_parent"
@@ -50,6 +58,7 @@
                         android:scaleType="centerCrop"
                         android:contentDescription="@string/title_log_emotion" />
 
+                    <!-- Placeholder Before Photo is Taken -->
                     <LinearLayout
                         android:id="@+id/layoutPhotoPlaceholder"
                         android:layout_width="wrap_content"
@@ -71,15 +80,76 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Capture or select a photo of yourself"
+                            android:text="Start Live AI Cam or choose photo"
                             android:textColor="@color/wellness_text_secondary"
                             android:textSize="13sp"
                             android:layout_marginTop="10dp" />
                     </LinearLayout>
+
+                    <!-- Real-Time Floating Live HUD Pill -->
+                    <LinearLayout
+                        android:id="@+id/layoutLiveHud"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|start"
+                        android:layout_margin="12dp"
+                        android:background="@drawable/bg_live_pill"
+                        android:paddingHorizontal="12dp"
+                        android:paddingVertical="6dp"
+                        android:gravity="center_vertical"
+                        android:visibility="gone">
+
+                        <View
+                            android:id="@+id/viewLivePulse"
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
+                            android:background="@drawable/bg_pulse_dot"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/tvLiveEmotionBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/live_detecting"
+                            android:textColor="#FFFFFF"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <!-- Camera Switch (Front/Back) -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSwitchCamera"
+                        style="@style/Widget.Material3.Button.IconButton.Filled.Tonal"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_gravity="top|end"
+                        android:layout_margin="12dp"
+                        app:icon="@drawable/ic_switch_camera"
+                        app:iconTint="#FFFFFF"
+                        android:backgroundTint="#80000000"
+                        android:contentDescription="Flip Camera"
+                        android:visibility="gone" />
+
+                    <!-- Live Capture Overlay Button -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCaptureLive"
+                        style="@style/Widget.Material3.Button"
+                        android:layout_width="wrap_content"
+                        android:layout_height="42dp"
+                        android:layout_gravity="bottom|center_horizontal"
+                        android:layout_marginBottom="12dp"
+                        android:text="@string/btn_capture_live"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:backgroundTint="#D9004D40"
+                        android:textColor="#FFFFFF"
+                        app:cornerRadius="21dp"
+                        android:visibility="gone" />
+
                 </FrameLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Dual Photo Action Buttons -->
+            <!-- Action Buttons Row: Live AI, System Camera, Gallery -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -87,12 +157,25 @@
                 android:layout_marginBottom="16dp">
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLiveCamera"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1.15"
+                    android:layout_marginEnd="4dp"
+                    android:text="@string/btn_live_ai"
+                    app:icon="@drawable/ic_videocam"
+                    app:cornerRadius="12dp"
+                    android:backgroundTint="@color/wellness_primary"
+                    android:textColor="@color/teal_on_primary" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnTakePhoto"
                     style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="6dp"
+                    android:layout_weight="0.95"
+                    android:layout_marginHorizontal="4dp"
                     android:text="@string/btn_take_photo"
                     app:icon="@drawable/ic_camera"
                     app:cornerRadius="12dp"
@@ -104,8 +187,8 @@
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
-                    android:layout_weight="1"
-                    android:layout_marginStart="6dp"
+                    android:layout_weight="0.9"
+                    android:layout_marginStart="4dp"
                     android:text="@string/btn_choose_gallery"
                     app:icon="@drawable/ic_gallery"
                     app:cornerRadius="12dp"
