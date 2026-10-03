@@ -51,30 +51,34 @@ public class EmotionRecognitionEngine {
     }
 
     public static void analyzeFaceEmotion(@NonNull Bitmap bitmap, @NonNull EmotionCallback callback) {
-        InputImage image = InputImage.fromBitmap(bitmap, 0);
+        try {
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
 
-        FaceDetectorOptions options = new FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
-                .setMinFaceSize(0.10f)
-                .build();
+            FaceDetectorOptions options = new FaceDetectorOptions.Builder()
+                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                    .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+                    .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                    .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+                    .setMinFaceSize(0.10f)
+                    .build();
 
-        FaceDetector detector = FaceDetection.getClient(options);
+            FaceDetector detector = FaceDetection.getClient(options);
 
-        detector.process(image)
-                .addOnSuccessListener(faces -> {
-                    if (faces == null || faces.isEmpty()) {
-                        callback.onNoFaceDetected();
-                        return;
-                    }
+            detector.process(image)
+                    .addOnSuccessListener(faces -> {
+                        if (faces == null || faces.isEmpty()) {
+                            callback.onNoFaceDetected();
+                            return;
+                        }
 
-                    Face primaryFace = faces.get(0);
-                    EmotionResult result = evaluateFaceFeatures(primaryFace);
-                    callback.onEmotionDetected(result);
-                })
-                .addOnFailureListener(callback::onError);
+                        Face primaryFace = faces.get(0);
+                        EmotionResult result = evaluateFaceFeatures(primaryFace);
+                        callback.onEmotionDetected(result);
+                    })
+                    .addOnFailureListener(callback::onError);
+        } catch (Throwable t) {
+            callback.onError(new Exception("Face detection unavailable: " + t.getMessage(), t));
+        }
     }
 
     /**

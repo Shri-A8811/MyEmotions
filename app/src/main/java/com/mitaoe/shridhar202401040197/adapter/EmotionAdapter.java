@@ -78,13 +78,11 @@ public class EmotionAdapter extends RecyclerView.Adapter<EmotionAdapter.EmotionV
                 File file = new File(emotion.getPhotoPath());
                 if (file.exists()) {
                     try {
-                        BitmapFactory.Options options = new BitmapFactory.Options();
-                        options.inSampleSize = 2; // scale down for grid preview efficiency
-                        Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+                        Bitmap bitmap = com.mitaoe.shridhar202401040197.LogYourEmotionActivity.decodeSampledBitmap(file.getAbsolutePath(), 300, 300);
                         if (bitmap != null) {
                             binding.ivItemPhoto.setImageBitmap(bitmap);
                         }
-                    } catch (Exception ignored) {
+                    } catch (Throwable ignored) {
                     }
                 }
             }

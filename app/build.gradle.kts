@@ -4,9 +4,7 @@ plugins {
 
 android {
     namespace = "com.mitaoe.shridhar202401040197"
-    compileSdk {
-        version = release(37)
-    }
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.mitaoe.shridhar202401040197"

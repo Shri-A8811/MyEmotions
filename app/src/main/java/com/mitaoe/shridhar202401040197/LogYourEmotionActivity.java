@@ -165,8 +165,8 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                     photoFile
             );
             takePictureLauncher.launch(currentPhotoUri);
-        } catch (IOException ex) {
-            Snackbar.make(binding.getRoot(), "Error creating private image file", Snackbar.LENGTH_SHORT).show();
+        } catch (Exception ex) {
+            Snackbar.make(binding.getRoot(), "Unable to launch camera. Please verify device camera availability.", Snackbar.LENGTH_LONG).show();
         }
     }
 
@@ -174,8 +174,8 @@ public class LogYourEmotionActivity extends AppCompatActivity {
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date());
         String imageFileName = "EMOTION_" + timeStamp + "_";
         File storageDir = new File(getFilesDir(), "emotions");
-        if (!storageDir.exists()) {
-            boolean created = storageDir.mkdirs();
+        if (!storageDir.exists() && !storageDir.mkdirs()) {
+            storageDir = getFilesDir();
         }
         return File.createTempFile(imageFileName, ".jpg", storageDir);
     }
@@ -195,16 +195,14 @@ public class LogYourEmotionActivity extends AppCompatActivity {
             }
             currentPhotoPath = photoFile.getAbsolutePath();
             processAndDisplayPhoto(currentPhotoPath);
-        } catch (IOException e) {
+        } catch (Throwable e) {
             Snackbar.make(binding.getRoot(), "Failed to load image from gallery", Snackbar.LENGTH_SHORT).show();
         }
     }
 
     private void processAndDisplayPhoto(String path) {
         try {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = 2; // Downsample for memory safety
-            Bitmap bitmap = BitmapFactory.decodeFile(path, options);
+            Bitmap bitmap = decodeSampledBitmap(path, 1024, 1024);
             if (bitmap != null) {
                 bitmap = rotateImageIfRequired(bitmap, path);
                 binding.ivPhotoPreview.setImageBitmap(bitmap);
@@ -213,9 +211,34 @@ public class LogYourEmotionActivity extends AppCompatActivity {
 
                 isUserManualOverride = false;
                 runEmotionRecognition(bitmap);
+            } else {
+                Snackbar.make(binding.getRoot(), "Unable to decode photo preview", Snackbar.LENGTH_SHORT).show();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Throwable t) {
+            Snackbar.make(binding.getRoot(), "Error processing photo", Snackbar.LENGTH_SHORT).show();
+        }
+    }
+
+    public static Bitmap decodeSampledBitmap(String path, int reqWidth, int reqHeight) {
+        try {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, options);
+
+            int inSampleSize = 1;
+            if (options.outHeight > reqHeight || options.outWidth > reqWidth) {
+                final int halfHeight = options.outHeight / 2;
+                final int halfWidth = options.outWidth / 2;
+                while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                    inSampleSize *= 2;
+                }
+            }
+            options.inSampleSize = Math.max(1, inSampleSize);
+            options.inJustDecodeBounds = false;
+            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            return BitmapFactory.decodeFile(path, options);
+        } catch (Throwable t) {
+            return null;
         }
     }
 
@@ -304,17 +327,23 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                 default:
                     return img;
             }
-        } catch (IOException e) {
+        } catch (Throwable e) {
             return img;
         }
     }
 
     private Bitmap rotateImage(Bitmap img, int degree) {
-        Matrix matrix = new Matrix();
-        matrix.postRotate(degree);
-        Bitmap rotatedImg = Bitmap.createBitmap(img, 0, 0, img.getWidth(), img.getHeight(), matrix, true);
-        img.recycle();
-        return rotatedImg;
+        try {
+            Matrix matrix = new Matrix();
+            matrix.postRotate(degree);
+            Bitmap rotatedImg = Bitmap.createBitmap(img, 0, 0, img.getWidth(), img.getHeight(), matrix, true);
+            if (rotatedImg != img) {
+                img.recycle();
+            }
+            return rotatedImg;
+        } catch (Throwable t) {
+            return img;
+        }
     }
 
     private void saveEmotion() {
