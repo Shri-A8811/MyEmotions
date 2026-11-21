@@ -1,15 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Base.Theme.MyEmotions" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/teal_primary</item>
+    <style name="Base.Theme.MyEmotions" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/wellness_primary</item>
         <item name="colorOnPrimary">@color/teal_on_primary</item>
-        <item name="colorPrimaryContainer">@color/teal_primary_container</item>
-        <item name="colorSecondary">@color/teal_secondary</item>
-        <item name="colorSecondaryContainer">@color/teal_secondary_container</item>
-        <item name="android:colorBackground">@color/background_light</item>
-        <item name="colorSurface">@color/surface_card</item>
-        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorPrimaryContainer">@color/wellness_primary_light</item>
+        <item name="colorOnPrimaryContainer">@color/wellness_primary_variant</item>
+        <item name="colorSecondary">@color/wellness_secondary</item>
+        <item name="colorOnSecondary">@color/wellness_text_primary</item>
+        <item name="colorSecondaryContainer">@color/wellness_primary_light</item>
+        <item name="colorOnSecondaryContainer">@color/wellness_primary_variant</item>
+        <item name="android:colorBackground">@color/wellness_background</item>
+        <item name="colorSurface">@color/wellness_surface</item>
+        <item name="colorOnSurface">@color/wellness_text_primary</item>
+        <item name="colorSurfaceVariant">@color/wellness_surface_muted</item>
+        <item name="colorOnSurfaceVariant">@color/wellness_text_secondary</item>
+        <item name="colorOutline">@color/wellness_stroke</item>
+        <item name="android:statusBarColor">@color/wellness_primary_variant</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
     <style name="Theme.MyEmotions" parent="Base.Theme.MyEmotions" />
+
+    <style name="Widget.MyEmotions.Chip.Filter" parent="Widget.Material3.Chip.Filter">
+        <item name="chipBackgroundColor">@color/chip_bg_selector</item>
+        <item name="android:textColor">@color/chip_text_selector</item>
+        <item name="chipStrokeColor">@color/chip_stroke_selector</item>
+        <item name="chipStrokeWidth">1dp</item>
+        <item name="checkedIconTint">@color/teal_on_primary</item>
+        <item name="chipCornerRadius">20dp</item>
+        <item name="chipMinHeight">36dp</item>
+        <item name="textStartPadding">6dp</item>
+        <item name="textEndPadding">6dp</item>
+        <item name="android:textSize">13sp</item>
+    </style>
 </resources>

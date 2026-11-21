@@ -12,6 +12,8 @@
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         android:background="@drawable/bg_gradient_header"
+        android:theme="@style/ThemeOverlay.Material3.Dark.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.Material3.Light"
         app:title="@string/title_my_emotions"
         app:titleTextColor="@color/teal_on_primary"
         app:navigationIcon="@drawable/ic_back"
@@ -22,6 +24,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:scrollbars="none"
+        android:clipToPadding="false"
         android:paddingStart="14dp"
         android:paddingEnd="14dp"
         android:paddingTop="12dp"
@@ -36,7 +39,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterAll"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_all"
@@ -44,42 +47,42 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterHappy"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_happy" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterExcited"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_excited" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterSad"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_sad" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterNeutral"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_neutral" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterSurprised"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_surprised" />
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/chipFilterAngry"
-                style="@style/Widget.Material3.Chip.Filter"
+                style="@style/Widget.MyEmotions.Chip.Filter"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/emotion_angry" />

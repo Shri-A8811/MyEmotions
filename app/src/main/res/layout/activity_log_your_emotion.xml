@@ -12,6 +12,8 @@
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         android:background="@drawable/bg_gradient_header"
+        android:theme="@style/ThemeOverlay.Material3.Dark.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.Material3.Light"
         app:title="@string/title_log_emotion"
         app:titleTextColor="@color/teal_on_primary"
         app:navigationIcon="@drawable/ic_back"
@@ -138,9 +140,17 @@
                         android:layout_height="42dp"
                         android:layout_gravity="bottom|center_horizontal"
                         android:layout_marginBottom="12dp"
+                        android:paddingStart="20dp"
+                        android:paddingEnd="20dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:maxLines="1"
                         android:text="@string/btn_capture_live"
                         android:textSize="13sp"
                         android:textStyle="bold"
+                        app:icon="@drawable/ic_camera"
+                        app:iconSize="18dp"
+                        app:iconTint="#FFFFFF"
                         android:backgroundTint="#D9004D40"
                         android:textColor="#FFFFFF"
                         app:cornerRadius="21dp"
@@ -160,11 +170,24 @@
                     android:id="@+id/btnLiveCamera"
                     style="@style/Widget.Material3.Button"
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_weight="1.15"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
                     android:layout_marginEnd="4dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="@string/btn_live_ai"
+                    android:textSize="12sp"
+                    android:letterSpacing="0"
                     app:icon="@drawable/ic_videocam"
+                    app:iconSize="16dp"
+                    app:iconPadding="4dp"
+                    app:iconGravity="textStart"
+                    app:iconTint="@color/teal_on_primary"
                     app:cornerRadius="12dp"
                     android:backgroundTint="@color/wellness_primary"
                     android:textColor="@color/teal_on_primary" />
@@ -173,11 +196,24 @@
                     android:id="@+id/btnTakePhoto"
                     style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_weight="0.95"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
                     android:layout_marginHorizontal="4dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="@string/btn_take_photo"
+                    android:textSize="12sp"
+                    android:letterSpacing="0"
                     app:icon="@drawable/ic_camera"
+                    app:iconSize="16dp"
+                    app:iconPadding="4dp"
+                    app:iconGravity="textStart"
+                    app:iconTint="@color/wellness_primary"
                     app:cornerRadius="12dp"
                     android:backgroundTint="#E0F2F1"
                     android:textColor="@color/wellness_primary" />
@@ -186,11 +222,24 @@
                     android:id="@+id/btnGallery"
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="0dp"
-                    android:layout_height="48dp"
-                    android:layout_weight="0.9"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
                     android:layout_marginStart="4dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="@string/btn_choose_gallery"
+                    android:textSize="12sp"
+                    android:letterSpacing="0"
                     app:icon="@drawable/ic_gallery"
+                    app:iconSize="16dp"
+                    app:iconPadding="4dp"
+                    app:iconGravity="textStart"
+                    app:iconTint="@color/wellness_primary"
                     app:cornerRadius="12dp"
                     android:textColor="@color/wellness_primary"
                     app:strokeColor="@color/wellness_primary" />
@@ -233,64 +282,60 @@
                         android:layout_marginTop="2dp"
                         android:layout_marginBottom="12dp" />
 
-                    <!-- Emotion Chips -->
-                    <HorizontalScrollView
+                    <!-- Emotion Chips (wrapped 2-row grid so all 6 options are visible) -->
+                    <com.google.android.material.chip.ChipGroup
+                        android:id="@+id/chipGroupEmotions"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:scrollbars="none">
+                        app:chipSpacingHorizontal="8dp"
+                        app:chipSpacingVertical="4dp"
+                        app:singleSelection="true"
+                        app:selectionRequired="true">
 
-                        <com.google.android.material.chip.ChipGroup
-                            android:id="@+id/chipGroupEmotions"
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipHappy"
+                            style="@style/Widget.MyEmotions.Chip.Filter"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            app:singleSelection="true"
-                            app:selectionRequired="true">
+                            android:text="@string/emotion_happy"
+                            android:checked="true" />
 
-                            <com.google.android.material.chip.Chip
-                                android:id="@+id/chipHappy"
-                                style="@style/Widget.Material3.Chip.Filter"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/emotion_happy"
-                                android:checked="true" />
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipExcited"
+                            style="@style/Widget.MyEmotions.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/emotion_excited" />
 
-                            <com.google.android.material.chip.Chip
-                                android:id="@+id/chipExcited"
-                                style="@style/Widget.Material3.Chip.Filter"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/emotion_excited" />
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipNeutral"
+                            style="@style/Widget.MyEmotions.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/emotion_neutral" />
 
-                            <com.google.android.material.chip.Chip
-                                android:id="@+id/chipNeutral"
-                                style="@style/Widget.Material3.Chip.Filter"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/emotion_neutral" />
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipSad"
+                            style="@style/Widget.MyEmotions.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/emotion_sad" />
 
-                            <com.google.android.material.chip.Chip
-                                android:id="@+id/chipSad"
-                                style="@style/Widget.Material3.Chip.Filter"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/emotion_sad" />
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipSurprised"
+                            style="@style/Widget.MyEmotions.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/emotion_surprised" />
 
-                            <com.google.android.material.chip.Chip
-                                android:id="@+id/chipSurprised"
-                                style="@style/Widget.Material3.Chip.Filter"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/emotion_surprised" />
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipAngry"
+                            style="@style/Widget.MyEmotions.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/emotion_angry" />
 
-                            <com.google.android.material.chip.Chip
-                                android:id="@+id/chipAngry"
-                                style="@style/Widget.Material3.Chip.Filter"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/emotion_angry" />
-
-                        </com.google.android.material.chip.ChipGroup>
-                    </HorizontalScrollView>
+                    </com.google.android.material.chip.ChipGroup>
 
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -302,6 +347,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:hint="@string/note_hint"
+                app:boxStrokeColor="@color/wellness_primary"
+                app:hintTextColor="@color/wellness_primary"
                 app:boxCornerRadiusBottomEnd="14dp"
                 app:boxCornerRadiusBottomStart="14dp"
                 app:boxCornerRadiusTopEnd="14dp"
@@ -316,6 +363,7 @@
                     android:layout_height="110dp"
                     android:gravity="top|start"
                     android:inputType="textMultiLine"
+                    android:textColor="@color/wellness_text_primary"
                     android:maxLength="300" />
             </com.google.android.material.textfield.TextInputLayout>
 
@@ -325,6 +373,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
                 android:text="@string/btn_save_emotion"
+                android:textColor="@color/teal_on_primary"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 app:cornerRadius="16dp"

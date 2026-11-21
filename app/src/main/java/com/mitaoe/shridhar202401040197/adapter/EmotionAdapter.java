@@ -74,11 +74,12 @@ public class EmotionAdapter extends RecyclerView.Adapter<EmotionAdapter.EmotionV
             // Set mood color styling
             applyMoodColor(emotion.getEmotionType());
 
+            binding.ivItemPhoto.setImageDrawable(null);
             if (emotion.getPhotoPath() != null) {
                 File file = new File(emotion.getPhotoPath());
                 if (file.exists()) {
                     try {
-                        Bitmap bitmap = com.mitaoe.shridhar202401040197.LogYourEmotionActivity.decodeSampledBitmap(file.getAbsolutePath(), 300, 300);
+                        Bitmap bitmap = com.mitaoe.shridhar202401040197.LogYourEmotionActivity.decodeRotatedSampledBitmap(file.getAbsolutePath(), 300, 300);
                         if (bitmap != null) {
                             binding.ivItemPhoto.setImageBitmap(bitmap);
                         }

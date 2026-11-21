@@ -8,6 +8,7 @@ import android.graphics.Matrix;
 import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -65,6 +66,11 @@ public class LogYourEmotionActivity extends AppCompatActivity {
     private boolean isLiveCameraActive = false;
     private final AtomicBoolean isAnalyzing = new AtomicBoolean(false);
     private boolean pendingLiveCamera = false;
+    private final EmotionRecognitionEngine.TemporalEmotionSmoother liveSmoother =
+            new EmotionRecognitionEngine.TemporalEmotionSmoother();
+    private volatile long lastLiveAnalysisMs = 0L;
+    private int noFaceStreak = 0;
+    private static final long LIVE_ANALYSIS_INTERVAL_MS = 180L;
 
     private final ActivityResultLauncher<String> requestPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
@@ -209,13 +215,16 @@ public class LogYourEmotionActivity extends AppCompatActivity {
 
     private void startLiveCamera() {
         isLiveCameraActive = true;
+        liveSmoother.reset();
+        noFaceStreak = 0;
+        lastLiveAnalysisMs = 0L;
         binding.cameraPreviewView.setVisibility(View.VISIBLE);
         binding.layoutLiveHud.setVisibility(View.VISIBLE);
         binding.btnSwitchCamera.setVisibility(View.VISIBLE);
         binding.btnCaptureLive.setVisibility(View.VISIBLE);
         binding.ivPhotoPreview.setVisibility(View.GONE);
         binding.layoutPhotoPlaceholder.setVisibility(View.GONE);
-        binding.btnLiveCamera.setText("🛑 Stop Live");
+        binding.btnLiveCamera.setText(R.string.btn_stop_live);
         binding.tvLiveEmotionBadge.setText(R.string.live_detecting);
 
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
@@ -249,12 +258,15 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                 .build();
 
         imageAnalysis.setAnalyzer(cameraExecutor, imageProxy -> {
-            if (!isLiveCameraActive || isAnalyzing.get()) {
+            long nowMs = SystemClock.elapsedRealtime();
+            if (!isLiveCameraActive
+                    || (nowMs - lastLiveAnalysisMs) < LIVE_ANALYSIS_INTERVAL_MS
+                    || !isAnalyzing.compareAndSet(false, true)) {
                 imageProxy.close();
                 return;
             }
+            lastLiveAnalysisMs = nowMs;
 
-            isAnalyzing.set(true);
             try {
                 Bitmap rawBitmap = imageProxy.toBitmap();
                 int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
@@ -274,9 +286,9 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                     }
 
                     Bitmap analysisBitmap;
-                    if (uprightBitmap.getWidth() > 360) {
-                        int targetHeight = Math.max(1, (int) (360.0f * uprightBitmap.getHeight() / uprightBitmap.getWidth()));
-                        analysisBitmap = Bitmap.createScaledBitmap(uprightBitmap, 360, targetHeight, true);
+                    if (uprightBitmap.getWidth() > 480) {
+                        int targetHeight = Math.max(1, (int) (480.0f * uprightBitmap.getHeight() / uprightBitmap.getWidth()));
+                        analysisBitmap = Bitmap.createScaledBitmap(uprightBitmap, 480, targetHeight, true);
                         if (analysisBitmap != uprightBitmap) {
                             uprightBitmap.recycle();
                         }
@@ -284,7 +296,7 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                         analysisBitmap = uprightBitmap;
                     }
 
-                    EmotionRecognitionEngine.analyzeFaceEmotion(analysisBitmap, new EmotionRecognitionEngine.EmotionCallback() {
+                    EmotionRecognitionEngine.analyzeFaceEmotion(analysisBitmap, true, new EmotionRecognitionEngine.EmotionCallback() {
                         @Override
                         public void onEmotionDetected(EmotionRecognitionEngine.EmotionResult result) {
                             try {
@@ -293,13 +305,16 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                             isAnalyzing.set(false);
                             runOnUiThread(() -> {
                                 if (!isLiveCameraActive) return;
-                                lastFaceResult = result;
-                                String hudText = String.format(Locale.getDefault(), "LIVE: %s (%d%%)", result.getFormatted(), result.confidence);
+                                noFaceStreak = 0;
+                                EmotionRecognitionEngine.EmotionResult smoothed = liveSmoother.smooth(result);
+                                if (smoothed == null) smoothed = result;
+                                lastFaceResult = smoothed;
+                                String hudText = String.format(Locale.getDefault(), "LIVE: %s (%d%%)", smoothed.getFormatted(), smoothed.confidence);
                                 binding.tvLiveEmotionBadge.setText(hudText);
                                 if (!isUserManualOverride) {
-                                    applyEmotionToUi(result);
+                                    applyEmotionToUi(smoothed);
                                 } else {
-                                    binding.tvEmotionRationale.setText(result.rationale);
+                                    binding.tvEmotionRationale.setText(smoothed.rationale);
                                 }
                             });
                         }
@@ -312,6 +327,10 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                             isAnalyzing.set(false);
                             runOnUiThread(() -> {
                                 if (!isLiveCameraActive) return;
+                                noFaceStreak++;
+                                if (noFaceStreak >= 3) {
+                                    liveSmoother.reset();
+                                }
                                 binding.tvLiveEmotionBadge.setText(R.string.live_detecting);
                             });
                         }
@@ -349,6 +368,8 @@ public class LogYourEmotionActivity extends AppCompatActivity {
         try {
             if (cameraProvider != null && cameraProvider.hasCamera(targetSelector)) {
                 cameraSelector = targetSelector;
+                liveSmoother.reset();
+                noFaceStreak = 0;
                 if (isLiveCameraActive) {
                     bindCameraUseCases();
                 }
@@ -362,6 +383,8 @@ public class LogYourEmotionActivity extends AppCompatActivity {
 
     private void stopLiveCamera() {
         isLiveCameraActive = false;
+        liveSmoother.reset();
+        noFaceStreak = 0;
         if (cameraProvider != null) {
             cameraProvider.unbindAll();
         }
@@ -395,7 +418,7 @@ public class LogYourEmotionActivity extends AppCompatActivity {
                     stopLiveCamera();
                     processAndDisplayPhoto(currentPhotoPath);
                     binding.etNote.requestFocus();
-                    Snackbar.make(binding.getRoot(), "Photo captured! Mood locked: " + (lastFaceResult != null ? lastFaceResult.getFormatted() : selectedEmotionType), Snackbar.LENGTH_SHORT).show();
+                    Snackbar.make(binding.getRoot(), "Photo captured — analyzing expression…", Snackbar.LENGTH_SHORT).show();
                 }
 
                 @Override
@@ -457,10 +480,10 @@ public class LogYourEmotionActivity extends AppCompatActivity {
 
     private void processAndDisplayPhoto(String path) {
         try {
-            Bitmap bitmap = decodeSampledBitmap(path, 1024, 1024);
+            Bitmap bitmap = decodeRotatedSampledBitmap(path, 1024, 1024);
             if (bitmap != null) {
-                bitmap = rotateImageIfRequired(bitmap, path);
                 binding.ivPhotoPreview.setImageBitmap(bitmap);
+                binding.ivPhotoPreview.setVisibility(View.VISIBLE);
                 binding.layoutPhotoPlaceholder.setVisibility(View.GONE);
                 binding.btnTakePhoto.setText(getString(R.string.btn_retake_photo));
 
@@ -472,6 +495,14 @@ public class LogYourEmotionActivity extends AppCompatActivity {
         } catch (Throwable t) {
             Snackbar.make(binding.getRoot(), "Error processing photo", Snackbar.LENGTH_SHORT).show();
         }
+    }
+
+    public static Bitmap decodeRotatedSampledBitmap(String path, int reqWidth, int reqHeight) {
+        Bitmap bitmap = decodeSampledBitmap(path, reqWidth, reqHeight);
+        if (bitmap != null) {
+            return rotateBitmapIfRequired(bitmap, path);
+        }
+        return null;
     }
 
     public static Bitmap decodeSampledBitmap(String path, int reqWidth, int reqHeight) {
@@ -490,7 +521,7 @@ public class LogYourEmotionActivity extends AppCompatActivity {
             }
             options.inSampleSize = Math.max(1, inSampleSize);
             options.inJustDecodeBounds = false;
-            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
             return BitmapFactory.decodeFile(path, options);
         } catch (Throwable t) {
             return null;
@@ -568,7 +599,7 @@ public class LogYourEmotionActivity extends AppCompatActivity {
         }
     }
 
-    private Bitmap rotateImageIfRequired(Bitmap img, String path) {
+    private static Bitmap rotateBitmapIfRequired(Bitmap img, String path) {
         try {
             ExifInterface ei = new ExifInterface(path);
             int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
@@ -587,7 +618,7 @@ public class LogYourEmotionActivity extends AppCompatActivity {
         }
     }
 
-    private Bitmap rotateImage(Bitmap img, int degree) {
+    private static Bitmap rotateImage(Bitmap img, int degree) {
         try {
             Matrix matrix = new Matrix();
             matrix.postRotate(degree);

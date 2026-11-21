@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 
 import org.tensorflow.lite.Interpreter;
 
+import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,7 +24,7 @@ import java.util.Map;
 /**
  * Deep Learning Facial Emotion Recognition Classifier.
  * Runs an on-device Convolutional Neural Network (CNN) trained on AffectNet and FER datasets.
- * Takes cropped facial images, converts to 48x48 normalized grayscale, and computes Softmax probabilities.
+ * Takes cropped facial images, converts to 48x48 normalized grayscale, and computes calibrated probabilities.
  */
 public class TFLiteEmotionClassifier {
 
@@ -32,13 +33,11 @@ public class TFLiteEmotionClassifier {
 
     private static final int INPUT_WIDTH = 48;
     private static final int INPUT_HEIGHT = 48;
+    private static final int NUM_PIXELS = INPUT_WIDTH * INPUT_HEIGHT;
     private static final int NUM_CLASSES = 8;
 
-    // Label indices in fer_model.names:
-    // 0: neutral, 1: happy, 2: surprised, 3: sad, 4: anger, 5: disgust, 6: fear, 7: contempt
-    private static final String[] LABELS = {
-            "Neutral", "Happy", "Surprised", "Sad", "Angry", "Disgust", "Fear", "Contempt"
-    };
+    // FERPlus class-imbalance bias calibration (model output bias for neutral is +0.605 vs negative biases on surprised/fear)
+    private static final float NEUTRAL_LOGIT_CALIBRATION = 0.25f;
 
     public static class ClassificationResult {
         public final String emotion;
@@ -58,7 +57,21 @@ public class TFLiteEmotionClassifier {
     private Interpreter interpreter;
     private boolean isInitialized = false;
 
+    private final Object inferenceLock = new Object();
+    private final ByteBuffer inputBuffer;
+    private final ByteBuffer outputBuffer;
+    private final int[] pixels = new int[NUM_PIXELS];
+    private final float[] grayBuffer = new float[NUM_PIXELS];
+    private final float[] flippedGrayBuffer = new float[NUM_PIXELS];
+    private final float[] logitsBuffer = new float[NUM_CLASSES];
+    private final int[] histogram = new int[256];
+
     private TFLiteEmotionClassifier(Context context) {
+        inputBuffer = ByteBuffer.allocateDirect(4 * NUM_PIXELS);
+        inputBuffer.order(ByteOrder.nativeOrder());
+        outputBuffer = ByteBuffer.allocateDirect(4 * NUM_CLASSES);
+        outputBuffer.order(ByteOrder.nativeOrder());
+
         try {
             ByteBuffer modelBuffer = loadModelBuffer(context, MODEL_FILE);
             Interpreter.Options options = new Interpreter.Options();
@@ -84,75 +97,55 @@ public class TFLiteEmotionClassifier {
     }
 
     /**
-     * Classifies facial emotion from a cropped face bitmap.
-     *
-     * @param faceBitmap Cropped bitmap centered around user's face.
-     * @return ClassificationResult containing detected emotion, confidence score, and rationale.
+     * Classifies facial emotion from a cropped face bitmap with horizontal-flip TTA enabled.
      */
     @Nullable
     public ClassificationResult classifyFace(@NonNull Bitmap faceBitmap) {
+        return classifyFace(faceBitmap, true);
+    }
+
+    /**
+     * Classifies facial emotion from a cropped face bitmap.
+     *
+     * @param faceBitmap Cropped square bitmap centered around user's face.
+     * @param useTta     When true, runs a second pass on the horizontally mirrored face and averages probabilities.
+     * @return ClassificationResult containing detected emotion, confidence score, and rationale.
+     */
+    @Nullable
+    public ClassificationResult classifyFace(@NonNull Bitmap faceBitmap, boolean useTta) {
         if (!isReady()) {
             Log.w(TAG, "Classifier is not ready.");
             return null;
         }
 
+        Bitmap scaled = null;
         try {
-            // Resize to 48x48
-            Bitmap scaled = Bitmap.createScaledBitmap(faceBitmap, INPUT_WIDTH, INPUT_HEIGHT, true);
+            scaled = (faceBitmap.getWidth() == INPUT_WIDTH && faceBitmap.getHeight() == INPUT_HEIGHT)
+                    ? faceBitmap
+                    : Bitmap.createScaledBitmap(faceBitmap, INPUT_WIDTH, INPUT_HEIGHT, true);
 
-            // Allocate float buffer: 1 * 48 * 48 * 1 * 4 bytes
-            ByteBuffer inputBuffer = ByteBuffer.allocateDirect(4 * INPUT_WIDTH * INPUT_HEIGHT);
-            inputBuffer.order(ByteOrder.nativeOrder());
+            float[] probs;
+            synchronized (inferenceLock) {
+                scaled.getPixels(pixels, 0, INPUT_WIDTH, 0, 0, INPUT_WIDTH, INPUT_HEIGHT);
+                prepareNormalizedGrayscale();
 
-            int[] pixels = new int[INPUT_WIDTH * INPUT_HEIGHT];
-            scaled.getPixels(pixels, 0, INPUT_WIDTH, 0, 0, INPUT_WIDTH, INPUT_HEIGHT);
+                runSingleInference(grayBuffer, logitsBuffer);
+                probs = calibrateAndSoftmax(logitsBuffer);
 
-            for (int pixel : pixels) {
-                // ITU-R standard formula for Grayscale luminance
-                float gray = 0.2989f * Color.red(pixel) + 0.5870f * Color.green(pixel) + 0.1140f * Color.blue(pixel);
-                // Normalized float [0.0f, 1.0f]
-                inputBuffer.putFloat(gray / 255.0f);
+                if (useTta) {
+                    mirrorHorizontally(grayBuffer, flippedGrayBuffer);
+                    runSingleInference(flippedGrayBuffer, logitsBuffer);
+                    float[] flippedProbs = calibrateAndSoftmax(logitsBuffer);
+                    for (int i = 0; i < NUM_CLASSES; i++) {
+                        probs[i] = 0.5f * (probs[i] + flippedProbs[i]);
+                    }
+                }
             }
 
-            // Output buffer: 1 * 8 classes * 4 bytes
-            ByteBuffer outputBuffer = ByteBuffer.allocateDirect(4 * NUM_CLASSES);
-            outputBuffer.order(ByteOrder.nativeOrder());
+            Map<String, Float> emotionMap = mapCalibratedProbs(probs);
 
-            // Run on-device inference
-            interpreter.run(inputBuffer, outputBuffer);
-
-            outputBuffer.rewind();
-            float[] logits = new float[NUM_CLASSES];
-            outputBuffer.asFloatBuffer().get(logits);
-
-            // Compute Softmax probabilities
-            float[] probs = softmax(logits);
-
-            // Map probabilities
-            Map<String, Float> emotionMap = new HashMap<>();
-            float neutralScore = probs[0] + (probs[7] * 0.5f); // Contempt contributes subtly to Neutral
-            float happyScore = probs[1];
-            float surprisedScore = probs[2] + (probs[6] * 0.4f); // Fear contributes subtly to Surprise
-            float sadScore = probs[3];
-            float angryScore = probs[4] + (probs[5] * 0.5f); // Disgust contributes to Anger
-
-            emotionMap.put("Neutral", neutralScore);
-            emotionMap.put("Happy", happyScore);
-            emotionMap.put("Surprised", surprisedScore);
-            emotionMap.put("Sad", sadScore);
-            emotionMap.put("Angry", angryScore);
-
-            // Check for "Excited": High happiness accompanied by surprise/intensity
-            if (happyScore > 0.65f && surprisedScore > 0.15f) {
-                emotionMap.put("Excited", happyScore * 1.05f);
-            } else {
-                emotionMap.put("Excited", happyScore * 0.75f);
-            }
-
-            // Find top emotion
             String bestEmotion = "Neutral";
             float highestScore = -1f;
-
             for (Map.Entry<String, Float> entry : emotionMap.entrySet()) {
                 if (entry.getValue() > highestScore) {
                     highestScore = entry.getValue();
@@ -160,23 +153,138 @@ public class TFLiteEmotionClassifier {
                 }
             }
 
-            int confidencePercent = Math.min(99, Math.max(55, Math.round(highestScore * 100)));
-
-            String rationale = buildRationale(bestEmotion, confidencePercent, emotionMap);
-
-            if (scaled != faceBitmap) {
-                scaled.recycle();
-            }
+            int confidencePercent = Math.min(98, Math.max(40, Math.round(highestScore * 100f)));
+            String rationale = buildRationale(bestEmotion);
 
             return new ClassificationResult(bestEmotion, confidencePercent, emotionMap, rationale);
 
         } catch (Throwable t) {
             Log.e(TAG, "Error running inference: " + t.getMessage(), t);
             return null;
+        } finally {
+            if (scaled != null && scaled != faceBitmap) {
+                scaled.recycle();
+            }
         }
     }
 
-    private float[] softmax(float[] logits) {
+    private void prepareNormalizedGrayscale() {
+        java.util.Arrays.fill(histogram, 0);
+        for (int i = 0; i < NUM_PIXELS; i++) {
+            int pixel = pixels[i];
+            float gray = 0.2989f * Color.red(pixel) + 0.5870f * Color.green(pixel) + 0.1140f * Color.blue(pixel);
+            grayBuffer[i] = gray;
+            int bin = Math.min(255, Math.max(0, Math.round(gray)));
+            histogram[bin]++;
+        }
+
+        int lowTarget = Math.round(NUM_PIXELS * 0.02f);
+        int highTarget = Math.round(NUM_PIXELS * 0.98f);
+        int cumulative = 0;
+        int p02 = 0;
+        int p98 = 255;
+        boolean foundLow = false;
+        for (int bin = 0; bin < 256; bin++) {
+            cumulative += histogram[bin];
+            if (!foundLow && cumulative >= lowTarget) {
+                p02 = bin;
+                foundLow = true;
+            }
+            if (cumulative >= highTarget) {
+                p98 = bin;
+                break;
+            }
+        }
+
+        int spread = p98 - p02;
+        if (spread >= 10 && spread <= 90) {
+            float invSpread = 1.0f / spread;
+            for (int i = 0; i < NUM_PIXELS; i++) {
+                float stretched = 0.06f + ((grayBuffer[i] - p02) * invSpread) * 0.88f;
+                grayBuffer[i] = Math.min(1.0f, Math.max(0.0f, stretched));
+            }
+        } else {
+            for (int i = 0; i < NUM_PIXELS; i++) {
+                grayBuffer[i] = grayBuffer[i] / 255.0f;
+            }
+        }
+    }
+
+    private void runSingleInference(float[] inputGray, float[] outLogits) {
+        inputBuffer.rewind();
+        for (int i = 0; i < NUM_PIXELS; i++) {
+            inputBuffer.putFloat(inputGray[i]);
+        }
+        inputBuffer.rewind();
+        outputBuffer.rewind();
+
+        interpreter.run(inputBuffer, outputBuffer);
+
+        outputBuffer.rewind();
+        outputBuffer.asFloatBuffer().get(outLogits);
+    }
+
+    private static void mirrorHorizontally(float[] src, float[] dst) {
+        for (int y = 0; y < INPUT_HEIGHT; y++) {
+            int rowStart = y * INPUT_WIDTH;
+            for (int x = 0; x < INPUT_WIDTH; x++) {
+                dst[rowStart + x] = src[rowStart + (INPUT_WIDTH - 1 - x)];
+            }
+        }
+    }
+
+    /**
+     * Pure-Java entry point for calibrating raw 8-class FERPlus logits and mapping to app emotions.
+     * Label indices in fer_model.names:
+     * 0: neutral, 1: happy, 2: surprised, 3: sad, 4: anger, 5: disgust, 6: fear, 7: contempt
+     */
+    @NonNull
+    public static Map<String, Float> mapAndCalibrateLogits(@NonNull float[] rawLogits) {
+        float[] probs = calibrateAndSoftmax(rawLogits);
+        return mapCalibratedProbs(probs);
+    }
+
+    private static float[] calibrateAndSoftmax(float[] rawLogits) {
+        float[] calibrated = new float[NUM_CLASSES];
+        System.arraycopy(rawLogits, 0, calibrated, 0, Math.min(rawLogits.length, NUM_CLASSES));
+        calibrated[0] -= NEUTRAL_LOGIT_CALIBRATION;
+        return softmax(calibrated);
+    }
+
+    private static Map<String, Float> mapCalibratedProbs(float[] probs) {
+        float neutralScore = probs[0] + (probs[7] * 0.35f);
+        float happyScore = probs[1];
+        float surprisedScore = probs[2] + (probs[6] * 0.75f);
+        float sadScore = probs[3] + (probs[6] * 0.15f);
+        float angryScore = probs[4] + (probs[5] * 0.85f) + (probs[7] * 0.45f);
+
+        float baseSum = neutralScore + happyScore + surprisedScore + sadScore + angryScore;
+        if (baseSum > 0f) {
+            neutralScore /= baseSum;
+            happyScore /= baseSum;
+            surprisedScore /= baseSum;
+            sadScore /= baseSum;
+            angryScore /= baseSum;
+        }
+
+        float excitedScore;
+        if (happyScore > 0.55f && surprisedScore > 0.12f) {
+            excitedScore = Math.min(0.99f, happyScore * 0.92f + surprisedScore * 0.45f);
+        } else {
+            excitedScore = happyScore * 0.45f;
+        }
+
+        Map<String, Float> emotionMap = new HashMap<>();
+        emotionMap.put("Neutral", neutralScore);
+        emotionMap.put("Happy", happyScore);
+        emotionMap.put("Surprised", surprisedScore);
+        emotionMap.put("Sad", sadScore);
+        emotionMap.put("Angry", angryScore);
+        emotionMap.put("Excited", excitedScore);
+        return emotionMap;
+    }
+
+    private static float[] softmax(float[] logits) {
         float max = Float.NEGATIVE_INFINITY;
         for (float v : logits) {
             if (v > max) max = v;
@@ -196,40 +304,44 @@ public class TFLiteEmotionClassifier {
         return probs;
     }
 
-    private String buildRationale(String emotion, int confidence, Map<String, Float> scores) {
+    private static String buildRationale(String emotion) {
         switch (emotion) {
             case "Sad":
-                return "Neural network detected downward lip tilt, eye furrowing, and somber facial expression (" + confidence + "% confidence).";
+                return "Neural network detected downward lip tilt and somber facial expression.";
             case "Surprised":
-                return "Neural network detected widened eye contours and characteristic startled jaw opening (" + confidence + "% confidence).";
+                return "Neural network detected widened eye contours, raised brows, and startled jaw opening.";
             case "Happy":
-                return "Neural network recognized upward cheekbone elevation and radiant smile contours (" + confidence + "% confidence).";
+                return "Neural network recognized upward cheekbone elevation and smile contours.";
             case "Excited":
-                return "Neural network recognized high-energy vibrant facial cues and joyful enthusiasm (" + confidence + "% confidence).";
+                return "Neural network recognized high-energy vibrant facial cues and joyful enthusiasm.";
             case "Angry":
-                return "Neural network detected intense eyebrow tension and compressed mouth posture (" + confidence + "% confidence).";
+                return "Neural network detected intense eyebrow tension and compressed mouth posture.";
             case "Neutral":
             default:
-                return "Neural network detected balanced, composed, and tranquil facial composure (" + confidence + "% confidence).";
+                return "Neural network detected balanced and composed facial posture.";
         }
     }
 
     private static ByteBuffer loadModelBuffer(Context context, String filename) throws IOException {
-        try {
-            AssetFileDescriptor afd = context.getAssets().openFd(filename);
-            FileInputStream fis = new FileInputStream(afd.getFileDescriptor());
+        try (AssetFileDescriptor afd = context.getAssets().openFd(filename);
+             FileInputStream fis = new FileInputStream(afd.getFileDescriptor())) {
             FileChannel channel = fis.getChannel();
             long startOffset = afd.getStartOffset();
             long declaredLength = afd.getDeclaredLength();
             return channel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
         } catch (IOException e) {
             // Fallback for compressed or streaming APKs
-            try (InputStream is = context.getAssets().open(filename)) {
-                byte[] bytes = new byte[is.available()];
-                int read = is.read(bytes);
+            try (InputStream is = context.getAssets().open(filename);
+                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                byte[] chunk = new byte[8192];
+                int read;
+                while ((read = is.read(chunk)) != -1) {
+                    baos.write(chunk, 0, read);
+                }
+                byte[] bytes = baos.toByteArray();
                 ByteBuffer buffer = ByteBuffer.allocateDirect(bytes.length);
                 buffer.order(ByteOrder.nativeOrder());
-                buffer.put(bytes, 0, read);
+                buffer.put(bytes);
                 buffer.rewind();
                 return buffer;
             }

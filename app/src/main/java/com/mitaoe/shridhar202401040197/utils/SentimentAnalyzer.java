@@ -6,16 +6,22 @@ import androidx.annotation.Nullable;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * Intelligent text sentiment & emotion analyzer.
- * Evaluates reflection notes to corroborate or detect emotions even when photo lighting is dim
- * or when photos don't contain a clear frontal face.
+ * Evaluates reflection notes with multi-word phrase matching, negation handling,
+ * and winning-emotion keyword attribution.
  */
 public class SentimentAnalyzer {
+
+    private static final Set<String> NEGATION_WORDS = new HashSet<>(Arrays.asList(
+            "not", "no", "never", "dont", "don", "didnt", "didn", "wasnt", "wasn",
+            "isnt", "isn", "arent", "aren", "cant", "cannot", "hardly"
+    ));
 
     private static final Set<String> HAPPY_WORDS = new HashSet<>(Arrays.asList(
             "happy", "joy", "joyful", "glad", "delighted", "cheerful", "pleased", "content",
@@ -26,8 +32,8 @@ public class SentimentAnalyzer {
 
     private static final Set<String> EXCITED_WORDS = new HashSet<>(Arrays.asList(
             "excited", "thrilled", "ecstatic", "hyped", "pumped", "energetic", "celebrate",
-            "celebrating", "win", "won", "winning", "hurray", "yay", "cant wait", "amazing",
-            "overjoyed", "elated", "triumph", "passionate", "epic", "best day", "proud", "achievement"
+            "celebrating", "win", "won", "winning", "hurray", "yay", "amazing",
+            "overjoyed", "elated", "triumph", "passionate", "epic", "proud", "achievement"
     ));
 
     private static final Set<String> SAD_WORDS = new HashSet<>(Arrays.asList(
@@ -39,20 +45,34 @@ public class SentimentAnalyzer {
     private static final Set<String> ANGRY_WORDS = new HashSet<>(Arrays.asList(
             "angry", "mad", "furious", "annoyed", "annoying", "irritated", "irritating",
             "frustrated", "frustration", "rage", "hate", "hating", "disgusted", "unfair",
-            "stress", "stressed", "stressful", "tense", "argue", "argued", "fed up", "pissed"
+            "stress", "stressed", "stressful", "tense", "argue", "argued", "pissed"
     ));
 
     private static final Set<String> SURPRISED_WORDS = new HashSet<>(Arrays.asList(
             "surprised", "surprise", "shocked", "shocking", "stunned", "astonished", "amazed",
-            "unbelievable", "unexpected", "wow", "unreal", "speechless", "out of nowhere",
+            "unbelievable", "unexpected", "wow", "unreal", "speechless",
             "sudden", "suddenly", "wonder", "whoa"
     ));
 
     private static final Set<String> NEUTRAL_WORDS = new HashSet<>(Arrays.asList(
             "normal", "okay", "fine", "calm", "neutral", "peaceful", "routine", "regular",
             "usual", "ordinary", "average", "chill", "relaxed", "working", "study", "studying",
-            "quiet", "steady", "nothing special", "simple"
+            "quiet", "steady", "simple"
     ));
+
+    private static final Map<String, String> PHRASE_TO_EMOTION = new LinkedHashMap<>();
+    static {
+        PHRASE_TO_EMOTION.put("cant wait", "Excited");
+        PHRASE_TO_EMOTION.put("can t wait", "Excited");
+        PHRASE_TO_EMOTION.put("best day", "Excited");
+        PHRASE_TO_EMOTION.put("so happy", "Happy");
+        PHRASE_TO_EMOTION.put("fed up", "Angry");
+        PHRASE_TO_EMOTION.put("pissed off", "Angry");
+        PHRASE_TO_EMOTION.put("out of nowhere", "Surprised");
+        PHRASE_TO_EMOTION.put("freaked out", "Surprised");
+        PHRASE_TO_EMOTION.put("blown away", "Surprised");
+        PHRASE_TO_EMOTION.put("nothing special", "Neutral");
+    }
 
     public static class SentimentResult {
         public final String emotion;
@@ -81,8 +101,13 @@ public class SentimentAnalyzer {
         }
 
         String cleaned = text.toLowerCase(Locale.getDefault())
-                .replaceAll("[^a-zA-Z0-9\\s]", " ");
-        String[] tokens = cleaned.split("\\s+");
+                .replaceAll("[^a-zA-Z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        if (cleaned.isEmpty()) {
+            return null;
+        }
 
         Map<String, Integer> hits = new HashMap<>();
         hits.put("Happy", 0);
@@ -92,33 +117,74 @@ public class SentimentAnalyzer {
         hits.put("Surprised", 0);
         hits.put("Neutral", 0);
 
-        String firstHitWord = null;
-        String firstHitEmotion = null;
+        Map<String, String> emotionKeyword = new HashMap<>();
+
+        String padded = " " + cleaned + " ";
+        for (Map.Entry<String, String> entry : PHRASE_TO_EMOTION.entrySet()) {
+            String phrase = entry.getKey();
+            if (padded.contains(" " + phrase + " ")) {
+                String emotion = entry.getValue();
+                int weight = "Neutral".equals(emotion) ? 2 : 4;
+                hits.put(emotion, hits.get(emotion) + weight);
+                emotionKeyword.putIfAbsent(emotion, phrase);
+            }
+        }
+
+        String[] tokens = cleaned.split("\\s+");
+        int negationWindow = 0;
 
         for (String token : tokens) {
+            if (NEGATION_WORDS.contains(token)) {
+                negationWindow = 2;
+                continue;
+            }
+
+            boolean isNegated = negationWindow > 0;
+            if (negationWindow > 0) {
+                negationWindow--;
+            }
+
             if (EXCITED_WORDS.contains(token)) {
-                hits.put("Excited", hits.get("Excited") + 3);
-                if (firstHitWord == null) { firstHitWord = token; firstHitEmotion = "Excited"; }
+                if (isNegated) {
+                    hits.put("Sad", hits.get("Sad") + 2);
+                    emotionKeyword.putIfAbsent("Sad", "not " + token);
+                } else {
+                    hits.put("Excited", hits.get("Excited") + 3);
+                    emotionKeyword.putIfAbsent("Excited", token);
+                }
             }
             if (HAPPY_WORDS.contains(token)) {
-                hits.put("Happy", hits.get("Happy") + 2);
-                if (firstHitWord == null) { firstHitWord = token; firstHitEmotion = "Happy"; }
+                if (isNegated) {
+                    hits.put("Sad", hits.get("Sad") + 2);
+                    emotionKeyword.putIfAbsent("Sad", "not " + token);
+                } else {
+                    hits.put("Happy", hits.get("Happy") + 2);
+                    emotionKeyword.putIfAbsent("Happy", token);
+                }
             }
             if (SAD_WORDS.contains(token)) {
-                hits.put("Sad", hits.get("Sad") + 3);
-                if (firstHitWord == null) { firstHitWord = token; firstHitEmotion = "Sad"; }
+                if (!isNegated) {
+                    hits.put("Sad", hits.get("Sad") + 3);
+                    emotionKeyword.putIfAbsent("Sad", token);
+                }
             }
             if (ANGRY_WORDS.contains(token)) {
-                hits.put("Angry", hits.get("Angry") + 3);
-                if (firstHitWord == null) { firstHitWord = token; firstHitEmotion = "Angry"; }
+                if (!isNegated) {
+                    hits.put("Angry", hits.get("Angry") + 3);
+                    emotionKeyword.putIfAbsent("Angry", token);
+                }
             }
             if (SURPRISED_WORDS.contains(token)) {
-                hits.put("Surprised", hits.get("Surprised") + 3);
-                if (firstHitWord == null) { firstHitWord = token; firstHitEmotion = "Surprised"; }
+                if (!isNegated) {
+                    hits.put("Surprised", hits.get("Surprised") + 3);
+                    emotionKeyword.putIfAbsent("Surprised", token);
+                }
             }
             if (NEUTRAL_WORDS.contains(token)) {
-                hits.put("Neutral", hits.get("Neutral") + 1);
-                if (firstHitWord == null) { firstHitWord = token; firstHitEmotion = "Neutral"; }
+                if (!isNegated) {
+                    hits.put("Neutral", hits.get("Neutral") + 1);
+                    emotionKeyword.putIfAbsent("Neutral", token);
+                }
             }
         }
 
@@ -147,6 +213,7 @@ public class SentimentAnalyzer {
         }
 
         int confidence = Math.min(95, 65 + (maxHit * 8));
-        return new SentimentResult(bestEmotion, emoji, confidence, firstHitWord, hits);
+        String winningKeyword = emotionKeyword.get(bestEmotion);
+        return new SentimentResult(bestEmotion, emoji, confidence, winningKeyword, hits);
     }
 }

@@ -119,7 +119,7 @@ public class MyEmotionsActivity extends AppCompatActivity {
             File file = new File(emotion.getPhotoPath());
             if (file.exists()) {
                 try {
-                    Bitmap bitmap = LogYourEmotionActivity.decodeSampledBitmap(file.getAbsolutePath(), 1200, 1200);
+                    Bitmap bitmap = LogYourEmotionActivity.decodeRotatedSampledBitmap(file.getAbsolutePath(), 1200, 1200);
                     if (bitmap != null) {
                         dialogBinding.ivDetailPhoto.setImageBitmap(bitmap);
                     }

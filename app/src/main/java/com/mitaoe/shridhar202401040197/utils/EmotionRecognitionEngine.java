@@ -2,6 +2,10 @@ package com.mitaoe.shridhar202401040197.utils;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.graphics.PointF;
 import android.graphics.Rect;
 
@@ -23,11 +27,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * State-of-the-Art Multimodal Emotion Recognition Engine.
- * Combines an on-device TensorFlow Lite Deep Learning Convolutional Neural Network (CNN)
- * with Google ML Kit Facial Landmark Geometry and NLP Sentiment Analysis.
+ * Multimodal Emotion Recognition Engine.
+ * Combines an on-device TensorFlow Lite CNN (trained on AffectNet/FERPlus),
+ * eye-aligned tight square face cropping, FACS-inspired geometric landmark signals,
+ * and NLP reflection note sentiment analysis.
  */
 public class EmotionRecognitionEngine {
+
+    private static final String[] EMOTION_KEYS = {
+            "Neutral", "Happy", "Surprised", "Sad", "Angry", "Excited"
+    };
+
+    private static final String[] BASE_KEYS = {
+            "Neutral", "Happy", "Surprised", "Sad", "Angry"
+    };
+
+    private static volatile FaceDetector accurateDetector;
+    private static volatile FaceDetector liveDetector;
 
     public static class EmotionResult {
         public final String emotion;
@@ -49,38 +65,174 @@ public class EmotionRecognitionEngine {
         }
     }
 
+    /**
+     * Rotation- and scale-invariant facial landmark features extracted from ML Kit contours & classifications.
+     */
+    public static class LandmarkSignals {
+        public final float smileProb;
+        public final float avgEyeOpen;
+        public final float innerMouthOpenRatio;
+        public final float lipCornerLift;
+        public final float browRaiseRatio;
+        public final float browFurrowRatio;
+        public final float eyeAspectRatio;
+        public final float headPitch;
+        public final boolean hasMouthContours;
+        public final boolean hasBrowContours;
+        public final boolean hasEyeContours;
+
+        public LandmarkSignals(
+                float smileProb,
+                float avgEyeOpen,
+                float innerMouthOpenRatio,
+                float lipCornerLift,
+                float browRaiseRatio,
+                float browFurrowRatio,
+                float eyeAspectRatio,
+                float headPitch,
+                boolean hasMouthContours,
+                boolean hasBrowContours,
+                boolean hasEyeContours
+        ) {
+            this.smileProb = smileProb;
+            this.avgEyeOpen = avgEyeOpen;
+            this.innerMouthOpenRatio = innerMouthOpenRatio;
+            this.lipCornerLift = lipCornerLift;
+            this.browRaiseRatio = browRaiseRatio;
+            this.browFurrowRatio = browFurrowRatio;
+            this.eyeAspectRatio = eyeAspectRatio;
+            this.headPitch = headPitch;
+            this.hasMouthContours = hasMouthContours;
+            this.hasBrowContours = hasBrowContours;
+            this.hasEyeContours = hasEyeContours;
+        }
+    }
+
+    /**
+     * Exponential Moving Average (EMA) smoother for stabilizing Live AI Camera predictions across frames.
+     */
+    public static class TemporalEmotionSmoother {
+        private static final float ALPHA = 0.40f;
+        private final Map<String, Float> emaScores = new HashMap<>();
+        private boolean initialized = false;
+
+        public synchronized void reset() {
+            emaScores.clear();
+            initialized = false;
+        }
+
+        @Nullable
+        public synchronized EmotionResult smooth(@Nullable EmotionResult current) {
+            if (current == null) return null;
+
+            if (!initialized) {
+                emaScores.clear();
+                for (String key : EMOTION_KEYS) {
+                    float val = current.scores.containsKey(key)
+                            ? current.scores.get(key)
+                            : (key.equalsIgnoreCase(current.emotion) ? current.confidence / 100f : 0f);
+                    emaScores.put(key, val);
+                }
+                initialized = true;
+                return current;
+            }
+
+            String bestEmotion = current.emotion;
+            float highestScore = -1f;
+            Map<String, Float> snapshot = new HashMap<>();
+
+            for (String key : EMOTION_KEYS) {
+                float prev = emaScores.containsKey(key) ? emaScores.get(key) : 0f;
+                float curr = current.scores.containsKey(key)
+                        ? current.scores.get(key)
+                        : (key.equalsIgnoreCase(current.emotion) ? current.confidence / 100f : 0f);
+                float smoothed = ALPHA * curr + (1f - ALPHA) * prev;
+                emaScores.put(key, smoothed);
+                snapshot.put(key, smoothed);
+                if (smoothed > highestScore) {
+                    highestScore = smoothed;
+                    bestEmotion = key;
+                }
+            }
+
+            int smoothedConfidence = Math.min(98, Math.max(48, Math.round(highestScore * 100f)));
+            String rationale = bestEmotion.equalsIgnoreCase(current.emotion)
+                    ? current.rationale
+                    : buildVisualRationale(bestEmotion, snapshot, null);
+
+            return new EmotionResult(
+                    bestEmotion,
+                    getEmojiForEmotion(bestEmotion),
+                    smoothedConfidence,
+                    rationale,
+                    snapshot
+            );
+        }
+    }
+
     public interface EmotionCallback {
         void onEmotionDetected(EmotionResult result);
         void onNoFaceDetected();
         void onError(Exception e);
     }
 
+    private static FaceDetector getDetector(boolean isLiveFrame) {
+        if (isLiveFrame) {
+            if (liveDetector == null) {
+                synchronized (EmotionRecognitionEngine.class) {
+                    if (liveDetector == null) {
+                        FaceDetectorOptions options = new FaceDetectorOptions.Builder()
+                                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+                                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+                                .setMinFaceSize(0.10f)
+                                .build();
+                        liveDetector = FaceDetection.getClient(options);
+                    }
+                }
+            }
+            return liveDetector;
+        } else {
+            if (accurateDetector == null) {
+                synchronized (EmotionRecognitionEngine.class) {
+                    if (accurateDetector == null) {
+                        FaceDetectorOptions options = new FaceDetectorOptions.Builder()
+                                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+                                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+                                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+                                .setMinFaceSize(0.10f)
+                                .build();
+                        accurateDetector = FaceDetection.getClient(options);
+                    }
+                }
+            }
+            return accurateDetector;
+        }
+    }
+
     /**
-     * Executes the full pipeline:
-     * 1. Google ML Kit detects face boundaries.
-     * 2. Crops facial region with boundary margin.
-     * 3. Runs TFLite Deep Learning Neural Network trained on AffectNet/FER.
-     * 4. Corroborates with facial landmark geometry.
+     * Executes the full pipeline in accurate mode (for captured/gallery photos).
      */
     public static void analyzeFaceEmotion(@NonNull Bitmap bitmap, @NonNull EmotionCallback callback) {
+        analyzeFaceEmotion(bitmap, false, callback);
+    }
+
+    /**
+     * Executes the face detection + eye-aligned crop + TFLite CNN + FACS landmark pipeline.
+     *
+     * @param isLiveFrame When true, uses fast ML Kit mode and skips horizontal-flip TTA for low latency.
+     */
+    public static void analyzeFaceEmotion(@NonNull Bitmap bitmap, boolean isLiveFrame, @NonNull EmotionCallback callback) {
         try {
             InputImage image = InputImage.fromBitmap(bitmap, 0);
-
-            FaceDetectorOptions options = new FaceDetectorOptions.Builder()
-                    .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                    .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                    .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                    .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
-                    .setMinFaceSize(0.10f)
-                    .build();
-
-            FaceDetector detector = FaceDetection.getClient(options);
+            FaceDetector detector = getDetector(isLiveFrame);
 
             detector.process(image)
                     .addOnSuccessListener(faces -> {
                         if (faces == null || faces.isEmpty()) {
-                            // Secondary fallback: Try center-crop neural classification
-                            EmotionResult centerCropResult = evaluateCenterCropFallback(bitmap);
+                            EmotionResult centerCropResult = evaluateCenterCropFallback(bitmap, !isLiveFrame);
                             if (centerCropResult != null) {
                                 callback.onEmotionDetected(centerCropResult);
                             } else {
@@ -89,8 +241,8 @@ public class EmotionRecognitionEngine {
                             return;
                         }
 
-                        Face primaryFace = faces.get(0);
-                        EmotionResult result = evaluateFaceFeatures(bitmap, primaryFace);
+                        Face primaryFace = selectPrimaryFace(faces);
+                        EmotionResult result = evaluateFaceFeatures(bitmap, primaryFace, !isLiveFrame);
                         callback.onEmotionDetected(result);
                     })
                     .addOnFailureListener(callback::onError);
@@ -99,199 +251,542 @@ public class EmotionRecognitionEngine {
         }
     }
 
-    /**
-     * Dual-Engine Evaluation: Deep Neural Network + Geometric Landmark Validation.
-     */
-    public static EmotionResult evaluateFaceFeatures(@NonNull Bitmap fullBitmap, @NonNull Face face) {
-        // 1. Crop face region with 15% margin
-        Bitmap faceCrop = cropFaceWithMargin(fullBitmap, face.getBoundingBox(), 0.15f);
+    @NonNull
+    private static Face selectPrimaryFace(@NonNull List<Face> faces) {
+        Face best = faces.get(0);
+        int bestArea = Math.max(0, best.getBoundingBox().width()) * Math.max(0, best.getBoundingBox().height());
+        for (int i = 1; i < faces.size(); i++) {
+            Face candidate = faces.get(i);
+            Rect r = candidate.getBoundingBox();
+            int area = Math.max(0, r.width()) * Math.max(0, r.height());
+            if (area > bestArea) {
+                bestArea = area;
+                best = candidate;
+            }
+        }
+        return best;
+    }
 
-        // 2. Run TFLite Deep Learning CNN
+    public static EmotionResult evaluateFaceFeatures(@NonNull Bitmap fullBitmap, @NonNull Face face) {
+        return evaluateFaceFeatures(fullBitmap, face, true);
+    }
+
+    /**
+     * Dual-Engine Evaluation: Eye-Aligned Deep Neural Network + FACS Landmark Geometry.
+     */
+    public static EmotionResult evaluateFaceFeatures(@NonNull Bitmap fullBitmap, @NonNull Face face, boolean useTta) {
+        Bitmap faceCrop = extractAlignedFaceCrop(fullBitmap, face);
+
         TFLiteEmotionClassifier.ClassificationResult nnResult = null;
         if (faceCrop != null) {
-            Context ctx = MyEmotionsApp.getInstance();
-            if (ctx != null) {
-                TFLiteEmotionClassifier classifier = TFLiteEmotionClassifier.getInstance(ctx);
-                if (classifier.isReady()) {
-                    nnResult = classifier.classifyFace(faceCrop);
+            try {
+                Context ctx = MyEmotionsApp.getInstance();
+                if (ctx != null) {
+                    TFLiteEmotionClassifier classifier = TFLiteEmotionClassifier.getInstance(ctx);
+                    if (classifier.isReady()) {
+                        nnResult = classifier.classifyFace(faceCrop, useTta);
+                    }
                 }
-            }
-            if (faceCrop != fullBitmap) {
-                faceCrop.recycle();
-            }
-        }
-
-        // 3. Compute Facial Landmark Cues
-        Float smileProb = face.getSmilingProbability();
-        Float leftEyeOpen = face.getLeftEyeOpenProbability();
-        Float rightEyeOpen = face.getRightEyeOpenProbability();
-        float pitch = face.getHeadEulerAngleX(); // Head tilt vertical
-
-        float smile = smileProb != null ? smileProb : 0.15f;
-        float leftEye = leftEyeOpen != null ? leftEyeOpen : 0.72f;
-        float rightEye = rightEyeOpen != null ? rightEyeOpen : 0.72f;
-        float avgEye = (leftEye + rightEye) / 2.0f;
-
-        // Lip contour analysis
-        FaceContour upperLipContour = face.getContour(FaceContour.UPPER_LIP_TOP);
-        FaceContour lowerLipContour = face.getContour(FaceContour.LOWER_LIP_BOTTOM);
-
-        Float lipCurvature = null;  // Positive = Smile, Negative = Frown
-        Float mouthAspectRatio = null; // Opening / Width
-
-        if (upperLipContour != null && lowerLipContour != null) {
-            List<PointF> upPts = upperLipContour.getPoints();
-            List<PointF> lowPts = lowerLipContour.getPoints();
-
-            if (upPts.size() >= 5 && lowPts.size() >= 5) {
-                PointF leftCorner = upPts.get(0);
-                PointF rightCorner = upPts.get(upPts.size() - 1);
-                PointF cupidsBow = upPts.get(upPts.size() / 2);
-                PointF lowerCenter = lowPts.get(lowPts.size() / 2);
-
-                float mouthWidth = Math.abs(rightCorner.x - leftCorner.x);
-                if (mouthWidth > 15f) {
-                    float lipCenterY = (cupidsBow.y + lowerCenter.y) / 2.0f;
-                    float cornerAvgY = (leftCorner.y + rightCorner.y) / 2.0f;
-                    lipCurvature = (lipCenterY - cornerAvgY) / mouthWidth;
-                    mouthAspectRatio = Math.abs(lowerCenter.y - cupidsBow.y) / mouthWidth;
+            } finally {
+                if (faceCrop != fullBitmap) {
+                    faceCrop.recycle();
                 }
             }
         }
 
-        // Eyebrow furrow detection
+        LandmarkSignals signals = extractLandmarkSignals(face);
+        return fuseSignals(nnResult, signals);
+    }
+
+    /**
+     * Crops a tight square around the face center (~8% padding per side) and deskews head roll
+     * using eye landmark orientation so the 48x48 CNN receives a clean upright facial crop.
+     */
+    @Nullable
+    private static Bitmap extractAlignedFaceCrop(@NonNull Bitmap fullBitmap, @NonNull Face face) {
+        try {
+            Rect bbox = face.getBoundingBox();
+            if (bbox.width() < 20 || bbox.height() < 20) return null;
+
+            float centerX = bbox.exactCenterX();
+            float centerY = bbox.exactCenterY();
+            float side = Math.max(bbox.width(), bbox.height()) * 1.16f;
+
+            float rollDeg = computeFaceRollDegrees(face);
+            boolean needsRotation = Math.abs(rollDeg) >= 3f && Math.abs(rollDeg) <= 45f;
+
+            int sideInt = Math.max(24, Math.round(side));
+            int half = sideInt / 2;
+            int left = Math.round(centerX) - half;
+            int top = Math.round(centerY) - half;
+
+            if (!needsRotation
+                    && left >= 0
+                    && top >= 0
+                    && left + sideInt <= fullBitmap.getWidth()
+                    && top + sideInt <= fullBitmap.getHeight()) {
+                return Bitmap.createBitmap(fullBitmap, left, top, sideInt, sideInt);
+            }
+
+            int targetSide = Math.min(Math.max(48, sideInt), 256);
+            float scale = targetSide / side;
+
+            Bitmap aligned = Bitmap.createBitmap(targetSide, targetSide, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(aligned);
+            canvas.drawColor(Color.rgb(128, 128, 128));
+
+            Matrix matrix = new Matrix();
+            matrix.postTranslate(-centerX, -centerY);
+            if (needsRotation) {
+                matrix.postRotate(-rollDeg);
+            }
+            matrix.postScale(scale, scale);
+            matrix.postTranslate(targetSide / 2f, targetSide / 2f);
+
+            Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
+            canvas.drawBitmap(fullBitmap, matrix, paint);
+            return aligned;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static float computeFaceRollDegrees(@NonNull Face face) {
+        FaceLandmark leftEye = face.getLandmark(FaceLandmark.LEFT_EYE);
+        FaceLandmark rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE);
+        if (leftEye != null && rightEye != null) {
+            PointF a = leftEye.getPosition();
+            PointF b = rightEye.getPosition();
+            PointF eyeL = (a.x <= b.x) ? a : b;
+            PointF eyeR = (a.x <= b.x) ? b : a;
+            float dx = eyeR.x - eyeL.x;
+            float dy = eyeR.y - eyeL.y;
+            if (dx > 5f) {
+                return (float) Math.toDegrees(Math.atan2(dy, dx));
+            }
+        }
+        return -face.getHeadEulerAngleZ();
+    }
+
+    @NonNull
+    public static LandmarkSignals extractLandmarkSignals(@NonNull Face face) {
+        float smile = face.getSmilingProbability() != null ? face.getSmilingProbability() : 0.15f;
+        float leftEyeOpen = face.getLeftEyeOpenProbability() != null ? face.getLeftEyeOpenProbability() : 0.72f;
+        float rightEyeOpen = face.getRightEyeOpenProbability() != null ? face.getRightEyeOpenProbability() : 0.72f;
+        float avgEyeOpen = (leftEyeOpen + rightEyeOpen) / 2.0f;
+        float pitch = face.getHeadEulerAngleX();
+
+        // Eye axis unit vector (ux, uy) and downward face vector (vx, vy)
+        PointF eyeCenterL = resolveEyeCenter(face, FaceLandmark.LEFT_EYE, FaceContour.LEFT_EYE);
+        PointF eyeCenterR = resolveEyeCenter(face, FaceLandmark.RIGHT_EYE, FaceContour.RIGHT_EYE);
+
+        float ux = 1f;
+        float uy = 0f;
+        float iod = Math.max(20f, face.getBoundingBox().width() * 0.42f);
+
+        if (eyeCenterL != null && eyeCenterR != null) {
+            PointF leftPt = (eyeCenterL.x <= eyeCenterR.x) ? eyeCenterL : eyeCenterR;
+            PointF rightPt = (eyeCenterL.x <= eyeCenterR.x) ? eyeCenterR : eyeCenterL;
+            float dx = rightPt.x - leftPt.x;
+            float dy = rightPt.y - leftPt.y;
+            float dist = (float) Math.hypot(dx, dy);
+            if (dist > 10f) {
+                iod = dist;
+                ux = dx / dist;
+                uy = dy / dist;
+            }
+            eyeCenterL = leftPt;
+            eyeCenterR = rightPt;
+        }
+        float vx = -uy;
+        float vy = ux;
+
+        // Mouth geometry using inner lip contours (robust against surprised open jaw)
+        float innerMouthOpenRatio = 0f;
+        float lipCornerLift = 0f;
+        boolean hasMouthContours = false;
+
+        FaceContour upperLipTop = face.getContour(FaceContour.UPPER_LIP_TOP);
+        FaceContour upperLipBottom = face.getContour(FaceContour.UPPER_LIP_BOTTOM);
+        FaceContour lowerLipTop = face.getContour(FaceContour.LOWER_LIP_TOP);
+        FaceContour lowerLipBottom = face.getContour(FaceContour.LOWER_LIP_BOTTOM);
+
+        if (upperLipTop != null && upperLipTop.getPoints().size() >= 5) {
+            List<PointF> topPts = upperLipTop.getPoints();
+            PointF leftCorner = extremePointAlongAxis(topPts, ux, uy, true);
+            PointF rightCorner = extremePointAlongAxis(topPts, ux, uy, false);
+            float mouthWidth = (float) Math.hypot(rightCorner.x - leftCorner.x, rightCorner.y - leftCorner.y);
+
+            if (mouthWidth > 12f) {
+                hasMouthContours = true;
+                PointF cornerMid = new PointF((leftCorner.x + rightCorner.x) / 2f, (leftCorner.y + rightCorner.y) / 2f);
+
+                if (upperLipBottom != null && !upperLipBottom.getPoints().isEmpty()
+                        && lowerLipTop != null && !lowerLipTop.getPoints().isEmpty()) {
+                    List<PointF> ubPts = upperLipBottom.getPoints();
+                    List<PointF> ltPts = lowerLipTop.getPoints();
+                    PointF upperInnerCenter = ubPts.get(ubPts.size() / 2);
+                    PointF lowerInnerCenter = ltPts.get(ltPts.size() / 2);
+
+                    float innerGap = (float) Math.hypot(
+                            lowerInnerCenter.x - upperInnerCenter.x,
+                            lowerInnerCenter.y - upperInnerCenter.y
+                    );
+                    innerMouthOpenRatio = innerGap / mouthWidth;
+
+                    float dyDown = (upperInnerCenter.x - cornerMid.x) * vx + (upperInnerCenter.y - cornerMid.y) * vy;
+                    lipCornerLift = dyDown / mouthWidth;
+                } else if (lowerLipBottom != null && !lowerLipBottom.getPoints().isEmpty()) {
+                    List<PointF> lbPts = lowerLipBottom.getPoints();
+                    PointF cupidsBow = topPts.get(topPts.size() / 2);
+                    PointF lowerOuterCenter = lbPts.get(lbPts.size() / 2);
+                    float outerGap = (float) Math.hypot(
+                            lowerOuterCenter.x - cupidsBow.x,
+                            lowerOuterCenter.y - cupidsBow.y
+                    );
+                    innerMouthOpenRatio = Math.max(0f, (outerGap / mouthWidth) - 0.28f);
+
+                    float dyDown = (cupidsBow.x - cornerMid.x) * vx + (cupidsBow.y - cornerMid.y) * vy;
+                    lipCornerLift = dyDown / mouthWidth;
+                }
+            }
+        }
+
+        // Eyebrow raise & furrow ratios normalized by inter-ocular distance (IOD)
+        float browRaiseRatio = 0.29f;
+        float browFurrowRatio = 0.48f;
+        boolean hasBrowContours = false;
+
         FaceContour leftBrow = face.getContour(FaceContour.LEFT_EYEBROW_TOP);
         FaceContour rightBrow = face.getContour(FaceContour.RIGHT_EYEBROW_TOP);
-        boolean browsFurrowed = false;
-        if (leftBrow != null && rightBrow != null && !leftBrow.getPoints().isEmpty() && !rightBrow.getPoints().isEmpty()) {
-            PointF innerLeft = leftBrow.getPoints().get(leftBrow.getPoints().size() - 1);
-            PointF innerRight = rightBrow.getPoints().get(0);
-            float browGap = Math.abs(innerRight.x - innerLeft.x);
-            float faceWidth = face.getBoundingBox().width();
-            if (faceWidth > 0 && (browGap / faceWidth) < 0.125f) {
-                browsFurrowed = true;
+        if (leftBrow != null && rightBrow != null
+                && !leftBrow.getPoints().isEmpty() && !rightBrow.getPoints().isEmpty()) {
+            List<PointF> lbPts = leftBrow.getPoints();
+            List<PointF> rbPts = rightBrow.getPoints();
+            PointF lbMid = averagePoints(lbPts);
+            PointF rbMid = averagePoints(rbPts);
+
+            // Inner brow tips are the points closest to the midline along eye axis
+            PointF innerL = extremePointAlongAxis(lbPts, ux, uy, false);
+            PointF innerR = extremePointAlongAxis(rbPts, ux, uy, true);
+            if (lbMid.x > rbMid.x) {
+                // Swap if left/right brow contour ordering corresponds to mirrored space
+                PointF tmp = lbMid; lbMid = rbMid; rbMid = tmp;
+                innerL = extremePointAlongAxis(rbPts, ux, uy, false);
+                innerR = extremePointAlongAxis(lbPts, ux, uy, true);
+            }
+
+            float innerGap = (float) Math.hypot(innerR.x - innerL.x, innerR.y - innerL.y);
+            browFurrowRatio = innerGap / iod;
+
+            if (eyeCenterL != null && eyeCenterR != null) {
+                float raiseL = -((lbMid.x - eyeCenterL.x) * vx + (lbMid.y - eyeCenterL.y) * vy);
+                float raiseR = -((rbMid.x - eyeCenterR.x) * vx + (rbMid.y - eyeCenterR.y) * vy);
+                browRaiseRatio = ((raiseL + raiseR) / 2f) / iod;
+                hasBrowContours = true;
             }
         }
 
-        boolean hasMouthOpen = (mouthAspectRatio != null && mouthAspectRatio > 0.28f);
-        boolean hasMouthDroop = (lipCurvature != null && lipCurvature < -0.010f);
-        boolean hasSmileCurvature = (lipCurvature != null && lipCurvature > 0.020f);
-
-        // Landmark-based score estimates
-        Map<String, Float> landmarkScores = new HashMap<>();
-        float lmSurprised = 0f;
-        float lmSad = 0f;
-        float lmNeutral = 0f;
-        float lmHappy = 0f;
-        float lmExcited = 0f;
-        float lmAngry = 0f;
-
-        if (smile < 0.55f && (hasMouthOpen || avgEye >= 0.78f)) {
-            lmSurprised = hasMouthOpen ? 0.88f : 0.82f;
+        // Eye aspect ratio from eye contours
+        float earSum = 0f;
+        int earCount = 0;
+        for (int contourId : new int[]{FaceContour.LEFT_EYE, FaceContour.RIGHT_EYE}) {
+            FaceContour eyeContour = face.getContour(contourId);
+            if (eyeContour != null && eyeContour.getPoints().size() >= 6) {
+                float ear = computeAxisAspectRatio(eyeContour.getPoints(), ux, uy, vx, vy);
+                if (ear > 0f) {
+                    earSum += ear;
+                    earCount++;
+                }
+            }
         }
+        boolean hasEyeContours = earCount > 0;
+        float eyeAspectRatio = hasEyeContours ? (earSum / earCount) : 0.25f;
 
-        if (smile < 0.25f && !hasMouthOpen && (hasMouthDroop || (smile < 0.08f && pitch < -1.5f))) {
-            lmSad = hasMouthDroop ? 0.89f : 0.80f;
-        }
+        return new LandmarkSignals(
+                smile,
+                avgEyeOpen,
+                innerMouthOpenRatio,
+                lipCornerLift,
+                browRaiseRatio,
+                browFurrowRatio,
+                eyeAspectRatio,
+                pitch,
+                hasMouthContours,
+                hasBrowContours,
+                hasEyeContours
+        );
+    }
 
-        if (smile < 0.22f && browsFurrowed) {
-            lmAngry = 0.86f;
-        }
+    /**
+     * Pure-Java multimodal fusion between CNN probabilities and FACS geometric landmark signals.
+     */
+    @NonNull
+    public static EmotionResult fuseSignals(
+            @Nullable TFLiteEmotionClassifier.ClassificationResult nnResult,
+            @NonNull LandmarkSignals signals
+    ) {
+        Map<String, Float> landmarkScores = computeLandmarkScores(signals);
 
-        if (smile >= 0.32f || hasSmileCurvature) {
-            float smileStrength = Math.max(smile, hasSmileCurvature ? 0.60f : smile);
-            if (smileStrength >= 0.72f && (avgEye >= 0.75f || hasMouthOpen)) {
-                lmExcited = 0.92f;
-                lmHappy = 0.82f;
-            } else {
-                lmHappy = 0.88f;
-                lmExcited = smileStrength >= 0.60f ? 0.75f : 0.40f;
+        String lmMaxEmotion = "Neutral";
+        float lmMaxScore = 0f;
+        for (Map.Entry<String, Float> entry : landmarkScores.entrySet()) {
+            if (entry.getValue() > lmMaxScore) {
+                lmMaxScore = entry.getValue();
+                lmMaxEmotion = entry.getKey();
             }
         }
 
-        if (!hasMouthOpen && !hasMouthDroop && !browsFurrowed) {
-            if (smile >= 0.06f && smile <= 0.35f && avgEye >= 0.58f && avgEye <= 0.85f) {
-                lmNeutral = 0.88f;
-            } else if (smile < 0.28f && lmSad < 0.70f && lmAngry < 0.70f && lmSurprised < 0.70f) {
-                lmNeutral = 0.80f;
-            }
-        }
+        boolean strongLandmarkNonNeutral = !"Neutral".equals(lmMaxEmotion) && lmMaxScore >= 0.75f;
 
-        landmarkScores.put("Surprised", lmSurprised);
-        landmarkScores.put("Sad", lmSad);
-        landmarkScores.put("Neutral", lmNeutral);
-        landmarkScores.put("Happy", lmHappy);
-        landmarkScores.put("Excited", lmExcited);
-        landmarkScores.put("Angry", lmAngry);
-
-        // 4. Fusion of Neural Network Probabilities with Landmark Verification
         Map<String, Float> fusedScores = new HashMap<>();
-        String bestEmotion = "Neutral";
-        float highestScore = 0f;
 
-        if (nnResult != null) {
-            // Neural network provides the primary deep classification
-            for (String key : new String[]{"Neutral", "Happy", "Surprised", "Sad", "Angry", "Excited"}) {
+        if (nnResult != null && nnResult.probabilities != null && !nnResult.probabilities.isEmpty()) {
+            String nnTopEmotion = "Neutral";
+            float nnTopScore = -1f;
+            for (String key : EMOTION_KEYS) {
+                float s = nnResult.probabilities.containsKey(key) ? nnResult.probabilities.get(key) : 0f;
+                if (s > nnTopScore) {
+                    nnTopScore = s;
+                    nnTopEmotion = key;
+                }
+            }
+
+            float nnWeight = (strongLandmarkNonNeutral && "Neutral".equals(nnTopEmotion)) ? 0.48f : 0.68f;
+            float lmWeight = 1.0f - nnWeight;
+
+            for (String key : EMOTION_KEYS) {
                 float nnScore = nnResult.probabilities.containsKey(key) ? nnResult.probabilities.get(key) : 0f;
                 float lmScore = landmarkScores.containsKey(key) ? landmarkScores.get(key) : 0f;
 
-                // 75% Neural Network (trained on 1M+ AffectNet faces) + 25% Geometric Landmark corroboration
-                float combined = (nnScore * 0.75f) + (lmScore * 0.25f);
+                float combined = (nnScore * nnWeight) + (lmScore * lmWeight);
+                if (strongLandmarkNonNeutral && "Neutral".equals(key) && "Neutral".equals(nnTopEmotion)) {
+                    combined *= 0.70f;
+                }
+                if (lmScore >= 0.70f && nnScore >= 0.30f) {
+                    combined = Math.min(0.98f, combined * 1.08f);
+                }
                 fusedScores.put(key, combined);
+            }
 
-                if (combined > highestScore) {
-                    highestScore = combined;
-                    bestEmotion = key;
+            // Normalize base 5 emotion probabilities so confidence stays honest and well-calibrated
+            float baseSum = 0f;
+            for (String key : BASE_KEYS) {
+                baseSum += fusedScores.get(key);
+            }
+            if (baseSum > 0f) {
+                for (String key : BASE_KEYS) {
+                    fusedScores.put(key, fusedScores.get(key) / baseSum);
                 }
+                float normExcited = Math.min(0.98f, fusedScores.get("Excited") / Math.max(baseSum, 0.75f));
+                fusedScores.put("Excited", normExcited);
             }
         } else {
-            // Fallback purely to landmarks if NN not loaded
-            for (Map.Entry<String, Float> entry : landmarkScores.entrySet()) {
-                fusedScores.put(entry.getKey(), entry.getValue());
-                if (entry.getValue() > highestScore) {
-                    highestScore = entry.getValue();
-                    bestEmotion = entry.getKey();
-                }
+            fusedScores.putAll(landmarkScores);
+        }
+
+        String bestEmotion = "Neutral";
+        float highestScore = -1f;
+        for (String key : EMOTION_KEYS) {
+            float score = fusedScores.containsKey(key) ? fusedScores.get(key) : 0f;
+            if (score > highestScore) {
+                highestScore = score;
+                bestEmotion = key;
             }
         }
 
-        if (highestScore < 0.40f) {
-            bestEmotion = "Neutral";
-            highestScore = 0.78f;
-        }
-
-        int confidencePercent = Math.min(99, Math.max(68, Math.round(highestScore * 100)));
+        int confidencePercent = Math.min(98, Math.max(48, Math.round(highestScore * 100f)));
         String emoji = getEmojiForEmotion(bestEmotion);
-
-        String rationale;
-        if (nnResult != null) {
-            rationale = "AI Neural Network (" + confidencePercent + "% confidence): " + nnResult.rationale;
-        } else {
-            rationale = "Facial landmark analysis detected " + bestEmotion + " expression (" + confidencePercent + "% confidence).";
-        }
+        String rationale = buildVisualRationale(bestEmotion, fusedScores, signals);
 
         return new EmotionResult(bestEmotion, emoji, confidencePercent, rationale, fusedScores);
     }
 
-    private static Bitmap cropFaceWithMargin(Bitmap bitmap, Rect bbox, float marginFraction) {
-        try {
-            int marginX = (int) (bbox.width() * marginFraction);
-            int marginY = (int) (bbox.height() * marginFraction);
+    @NonNull
+    private static Map<String, Float> computeLandmarkScores(@NonNull LandmarkSignals signals) {
+        boolean hasOpenMouth = signals.hasMouthContours && signals.innerMouthOpenRatio >= 0.18f;
+        boolean hasWideOpenMouth = signals.hasMouthContours && signals.innerMouthOpenRatio >= 0.26f;
+        boolean hasRaisedBrows = signals.hasBrowContours && signals.browRaiseRatio >= 0.36f;
+        boolean hasLoweredBrows = signals.hasBrowContours && signals.browRaiseRatio <= 0.24f;
+        boolean hasFurrowedBrows = signals.hasBrowContours && signals.browFurrowRatio <= 0.35f;
+        boolean hasMouthDroop = signals.hasMouthContours && !hasOpenMouth && signals.lipCornerLift <= -0.025f;
+        boolean hasSmileLift = signals.hasMouthContours && !hasOpenMouth && signals.lipCornerLift >= 0.035f;
+        boolean hasWideEyes = signals.avgEyeOpen >= 0.85f && (!signals.hasEyeContours || signals.eyeAspectRatio >= 0.27f);
 
-            int x = Math.max(0, bbox.left - marginX);
-            int y = Math.max(0, bbox.top - marginY);
-            int w = Math.min(bitmap.getWidth() - x, bbox.width() + 2 * marginX);
-            int h = Math.min(bitmap.getHeight() - y, bbox.height() + 2 * marginY);
+        float lmHappy = 0f;
+        float lmExcited = 0f;
+        float lmSurprised = 0f;
+        float lmAngry = 0f;
+        float lmSad = 0f;
+        float lmNeutral = 0f;
 
-            if (w > 20 && h > 20) {
-                return Bitmap.createBitmap(bitmap, x, y, w, h);
+        if (signals.smileProb >= 0.45f || hasSmileLift) {
+            float smileStrength = Math.max(signals.smileProb, hasSmileLift ? 0.65f : signals.smileProb);
+            if (smileStrength >= 0.80f && (hasOpenMouth || hasRaisedBrows)) {
+                lmExcited = 0.90f;
+                lmHappy = 0.65f;
+            } else if (smileStrength >= 0.65f) {
+                lmHappy = Math.min(0.92f, 0.72f + (smileStrength - 0.65f) * 0.57f);
+                lmExcited = (hasOpenMouth || hasRaisedBrows) ? 0.72f : 0.42f;
+            } else {
+                lmHappy = 0.60f + (smileStrength - 0.45f) * 0.60f;
+                lmExcited = 0.28f;
             }
-        } catch (Throwable ignored) {
+        }
+
+        if (signals.smileProb < 0.45f && (hasOpenMouth || (hasRaisedBrows && hasWideEyes))) {
+            if (hasWideOpenMouth || (hasOpenMouth && hasRaisedBrows)) {
+                lmSurprised = 0.90f;
+            } else if (hasOpenMouth) {
+                lmSurprised = 0.78f;
+            } else {
+                lmSurprised = 0.68f;
+            }
+        }
+
+        if (signals.smileProb < 0.22f && !hasWideOpenMouth && (hasFurrowedBrows || hasLoweredBrows)) {
+            lmAngry = (hasFurrowedBrows && hasLoweredBrows) ? 0.85f : 0.72f;
+        }
+
+        if (signals.smileProb < 0.20f && !hasOpenMouth
+                && (hasMouthDroop || (signals.smileProb < 0.08f && signals.headPitch < -6.0f))) {
+            lmSad = hasMouthDroop ? 0.84f : 0.68f;
+        }
+
+        if (signals.smileProb < 0.30f && !hasOpenMouth && !hasMouthDroop
+                && !hasFurrowedBrows && !hasRaisedBrows && !hasLoweredBrows
+                && lmSurprised == 0f && lmSad == 0f && lmAngry == 0f) {
+            lmNeutral = 0.82f;
+        } else if (lmSurprised < 0.50f && lmSad < 0.50f && lmAngry < 0.50f
+                && lmHappy < 0.50f && lmExcited < 0.50f) {
+            lmNeutral = 0.45f;
+        }
+
+        Map<String, Float> scores = new HashMap<>();
+        scores.put("Happy", lmHappy);
+        scores.put("Excited", lmExcited);
+        scores.put("Surprised", lmSurprised);
+        scores.put("Angry", lmAngry);
+        scores.put("Sad", lmSad);
+        scores.put("Neutral", lmNeutral);
+        return scores;
+    }
+
+    @NonNull
+    private static String buildVisualRationale(
+            @NonNull String bestEmotion,
+            @NonNull Map<String, Float> scores,
+            @Nullable LandmarkSignals signals
+    ) {
+        String core;
+        switch (bestEmotion) {
+            case "Surprised":
+                if (signals != null && signals.hasBrowContours && signals.browRaiseRatio >= 0.36f) {
+                    core = "Widened eyes, raised brows, and startled open-mouth expression";
+                } else {
+                    core = "Startled open-mouth posture and heightened facial expression";
+                }
+                break;
+            case "Excited":
+                core = "High-energy smile and expressive joyful facial cues";
+                break;
+            case "Happy":
+                core = "Upward smile contours and warm, joyful expression";
+                break;
+            case "Sad":
+                core = "Downward lip corners and subdued facial expression";
+                break;
+            case "Angry":
+                core = "Furrowed brow tension and firm mouth posture";
+                break;
+            case "Neutral":
+            default:
+                core = "Balanced, relaxed, and composed facial posture";
+                break;
+        }
+
+        float topScore = scores.containsKey(bestEmotion) ? scores.get(bestEmotion) : 0f;
+        String runnerUp = null;
+        float runnerUpScore = 0f;
+        for (String key : EMOTION_KEYS) {
+            if (key.equals(bestEmotion)) continue;
+            float s = scores.containsKey(key) ? scores.get(key) : 0f;
+            if (s > runnerUpScore) {
+                runnerUpScore = s;
+                runnerUp = key;
+            }
+        }
+
+        if (runnerUp != null && topScore > 0f && runnerUpScore >= topScore * 0.65f) {
+            return core + " • Close runner-up: " + runnerUp;
+        }
+        return core;
+    }
+
+    @Nullable
+    private static PointF resolveEyeCenter(@NonNull Face face, int landmarkType, int contourType) {
+        FaceLandmark lm = face.getLandmark(landmarkType);
+        if (lm != null) {
+            return lm.getPosition();
+        }
+        FaceContour contour = face.getContour(contourType);
+        if (contour != null && !contour.getPoints().isEmpty()) {
+            return averagePoints(contour.getPoints());
         }
         return null;
     }
 
-    private static EmotionResult evaluateCenterCropFallback(Bitmap bitmap) {
+    @NonNull
+    private static PointF extremePointAlongAxis(@NonNull List<PointF> pts, float ux, float uy, boolean findMin) {
+        PointF best = pts.get(0);
+        float bestProj = best.x * ux + best.y * uy;
+        for (int i = 1; i < pts.size(); i++) {
+            PointF p = pts.get(i);
+            float proj = p.x * ux + p.y * uy;
+            if (findMin ? (proj < bestProj) : (proj > bestProj)) {
+                bestProj = proj;
+                best = p;
+            }
+        }
+        return best;
+    }
+
+    @NonNull
+    private static PointF averagePoints(@NonNull List<PointF> pts) {
+        float sx = 0f;
+        float sy = 0f;
+        for (PointF p : pts) {
+            sx += p.x;
+            sy += p.y;
+        }
+        return new PointF(sx / pts.size(), sy / pts.size());
+    }
+
+    private static float computeAxisAspectRatio(
+            @NonNull List<PointF> pts,
+            float ux,
+            float uy,
+            float vx,
+            float vy
+    ) {
+        float minU = Float.POSITIVE_INFINITY;
+        float maxU = Float.NEGATIVE_INFINITY;
+        float minV = Float.POSITIVE_INFINITY;
+        float maxV = Float.NEGATIVE_INFINITY;
+        for (PointF p : pts) {
+            float pu = p.x * ux + p.y * uy;
+            float pv = p.x * vx + p.y * vy;
+            if (pu < minU) minU = pu;
+            if (pu > maxU) maxU = pu;
+            if (pv < minV) minV = pv;
+            if (pv > maxV) maxV = pv;
+        }
+        float width = maxU - minU;
+        float height = maxV - minV;
+        return (width > 2f) ? (height / width) : 0f;
+    }
+
+    private static EmotionResult evaluateCenterCropFallback(Bitmap bitmap, boolean useTta) {
         try {
             Context ctx = MyEmotionsApp.getInstance();
             if (ctx == null) return null;
@@ -302,18 +797,18 @@ public class EmotionRecognitionEngine {
             Bitmap center = Bitmap.createBitmap(bitmap, x, y, size, size);
 
             TFLiteEmotionClassifier.ClassificationResult nnResult =
-                    TFLiteEmotionClassifier.getInstance(ctx).classifyFace(center);
+                    TFLiteEmotionClassifier.getInstance(ctx).classifyFace(center, useTta);
 
             if (center != bitmap) {
                 center.recycle();
             }
 
-            if (nnResult != null && nnResult.confidence >= 65) {
+            if (nnResult != null && nnResult.confidence >= 60) {
                 return new EmotionResult(
                         nnResult.emotion,
                         getEmojiForEmotion(nnResult.emotion),
                         nnResult.confidence,
-                        "AI Neural Network (fallback): " + nnResult.rationale,
+                        nnResult.rationale,
                         nnResult.probabilities
                 );
             }
@@ -334,7 +829,7 @@ public class EmotionRecognitionEngine {
             case "surprised":
                 return "😲";
             case "angry":
-                return "😡";
+                return "😠";
             case "neutral":
             default:
                 return "😐";
@@ -364,19 +859,17 @@ public class EmotionRecognitionEngine {
             return faceResult;
         }
 
-        // Both face and note exist!
         if (faceResult.emotion.equalsIgnoreCase(noteResult.emotion)) {
             int combinedConf = Math.min(99, faceResult.confidence + 6);
             return new EmotionResult(
                     faceResult.emotion,
                     faceResult.emoji,
                     combinedConf,
-                    "Harmonized AI Match: Face & note (\"" + noteResult.matchingKeyword + "\") both indicate " + faceResult.getFormatted(),
+                    "Harmonized Match: Face & note (\"" + noteResult.matchingKeyword + "\") both indicate " + faceResult.getFormatted(),
                     faceResult.scores
             );
         }
 
-        // If face detection is neutral/ambiguous but note has strong emotion keyword:
         if ("Neutral".equalsIgnoreCase(faceResult.emotion) && noteResult.hasStrongSignal()) {
             return new EmotionResult(
                     noteResult.emotion,
@@ -387,7 +880,6 @@ public class EmotionRecognitionEngine {
             );
         }
 
-        // If face detection has strong confidence (>= 82%), keep face as primary and note as context
         return new EmotionResult(
                 faceResult.emotion,
                 faceResult.emoji,
